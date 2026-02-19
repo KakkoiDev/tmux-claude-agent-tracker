@@ -1,0 +1,272 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TRACKER_DIR="$HOME/.claude-agent-tracker"
+DB="$TRACKER_DIR/tracker.db"
+CACHE="$TRACKER_DIR/status_cache"
+
+sql() { sqlite3 "$DB" "PRAGMA busy_timeout=100; $*"; }
+sql_esc() { printf '%s' "${1//\'/\'\'}"; }
+
+# ── init ──────────────────────────────────────────────────────────────
+
+cmd_init() {
+    mkdir -p "$TRACKER_DIR"
+    sqlite3 "$DB" <<'SQL'
+PRAGMA journal_mode=WAL;
+PRAGMA busy_timeout=100;
+
+CREATE TABLE IF NOT EXISTS sessions (
+    session_id    TEXT PRIMARY KEY,
+    status        TEXT NOT NULL DEFAULT 'working'
+        CHECK(status IN ('working', 'blocked', 'idle')),
+    cwd           TEXT NOT NULL,
+    project_name  TEXT NOT NULL,
+    git_branch    TEXT,
+    prompt_summary TEXT,
+    agent_type    TEXT,
+    tmux_pane     TEXT,
+    tmux_target   TEXT,
+    started_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at    INTEGER NOT NULL DEFAULT (unixepoch())
+);
+SQL
+    echo "Initialized: $DB"
+}
+
+# ── hook ──────────────────────────────────────────────────────────────
+
+cmd_hook() {
+    [[ -f "$DB" ]] || return 0
+    local event="$1"
+    local json
+    json=$(cat) || json='{}'
+
+    local sid
+    sid=$(printf '%s' "$json" | jq -r '.session_id // empty' 2>/dev/null) || true
+    [[ -z "$sid" ]] && return 0
+
+    case "$event" in
+        SessionStart)     _hook_session_start "$sid" "$json" ;;
+        UserPromptSubmit) _hook_prompt "$sid" "$json" ;;
+        PostToolUse)      sql "UPDATE sessions SET status='working', updated_at=unixepoch()
+                               WHERE session_id='$sid' AND status='blocked';" ;;
+        Stop)             sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
+                               WHERE session_id='$sid';" ;;
+        Notification)     _hook_notification "$sid" ;;
+        SessionEnd)       sql "DELETE FROM sessions WHERE session_id='$sid';" ;;
+        SubagentStart)    _hook_subagent_start "$sid" "$json" ;;
+        SubagentStop)     _hook_subagent_stop "$json" ;;
+        TeammateIdle)     _hook_teammate_idle "$json" ;;
+        *) return 0 ;;
+    esac
+
+    _render_cache
+    tmux refresh-client -S 2>/dev/null || true
+}
+
+_hook_session_start() {
+    local sid="$1" json="$2"
+    local cwd project branch pane target
+
+    cwd=$(printf '%s' "$json" | jq -r '.cwd // empty' 2>/dev/null) || true
+    [[ -z "$cwd" ]] && cwd="${PWD}"
+    project=$(basename "$cwd")
+    branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+
+    pane="${TMUX_PANE:-}"
+    target=""
+    if [[ -n "$pane" ]]; then
+        target=$(tmux display-message -t "$pane" \
+            -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
+    fi
+
+    sql "INSERT OR REPLACE INTO sessions
+         (session_id, status, cwd, project_name, git_branch, tmux_pane, tmux_target)
+         VALUES ('$sid', 'working',
+                 '$(sql_esc "$cwd")', '$(sql_esc "$project")',
+                 '$(sql_esc "$branch")', '$(sql_esc "$pane")',
+                 '$(sql_esc "$target")');"
+}
+
+_hook_prompt() {
+    local sid="$1" json="$2"
+    local prompt
+    prompt=$(printf '%s' "$json" | jq -r '(.prompt // .message // .content // "")' 2>/dev/null) || true
+    prompt="${prompt:0:60}"
+
+    sql "UPDATE sessions SET status='working',
+         prompt_summary='$(sql_esc "$prompt")', updated_at=unixepoch()
+         WHERE session_id='$sid';"
+}
+
+_hook_notification() {
+    local sid="$1"
+    sql "UPDATE sessions SET status='blocked', updated_at=unixepoch()
+         WHERE session_id='$sid';"
+    if [[ "${CLAUDE_TRACKER_SOUND:-0}" == "1" ]]; then
+        afplay /System/Library/Sounds/Glass.aiff &
+    fi
+}
+
+_hook_subagent_start() {
+    local sid="$1" json="$2"
+    local sub_id cwd project branch atype pane target
+
+    sub_id=$(printf '%s' "$json" | jq -r '.subagent_id // empty' 2>/dev/null) || true
+    [[ -z "$sub_id" ]] && sub_id="$sid"
+
+    cwd=$(printf '%s' "$json" | jq -r '.cwd // empty' 2>/dev/null) || true
+    [[ -z "$cwd" ]] && cwd="${PWD}"
+    project=$(basename "$cwd")
+    branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+    atype=$(printf '%s' "$json" | jq -r '.subagent_type // "subagent"' 2>/dev/null) || true
+
+    pane="${TMUX_PANE:-}"
+    target=""
+    if [[ -n "$pane" ]]; then
+        target=$(tmux display-message -t "$pane" \
+            -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
+    fi
+
+    sql "INSERT OR REPLACE INTO sessions
+         (session_id, status, cwd, project_name, git_branch, agent_type, tmux_pane, tmux_target)
+         VALUES ('$sub_id', 'working',
+                 '$(sql_esc "$cwd")', '$(sql_esc "$project")',
+                 '$(sql_esc "$branch")', '$(sql_esc "$atype")',
+                 '$(sql_esc "$pane")', '$(sql_esc "$target")');"
+}
+
+_hook_subagent_stop() {
+    local json="$1"
+    local sub_id
+    sub_id=$(printf '%s' "$json" | jq -r '.subagent_id // .session_id // empty' 2>/dev/null) || true
+    [[ -n "$sub_id" ]] && sql "DELETE FROM sessions WHERE session_id='$sub_id';"
+}
+
+_hook_teammate_idle() {
+    local json="$1"
+    local tid
+    tid=$(printf '%s' "$json" | jq -r '.teammate_id // .session_id // empty' 2>/dev/null) || true
+    [[ -n "$tid" ]] && sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
+                            WHERE session_id='$tid';"
+}
+
+# ── render cache ──────────────────────────────────────────────────────
+
+_render_cache() {
+    local w b i dur result=""
+    w=$(sql "SELECT COUNT(*) FROM sessions WHERE status='working';")
+    b=$(sql "SELECT COUNT(*) FROM sessions WHERE status='blocked';")
+    i=$(sql "SELECT COUNT(*) FROM sessions WHERE status='idle';")
+
+    [[ "$w" -gt 0 ]] && result+="#[fg=green]${w}*#[default] "
+
+    if [[ "$b" -gt 0 ]]; then
+        dur=$(sql "SELECT (unixepoch() - MIN(updated_at)) / 60
+                   FROM sessions WHERE status='blocked';")
+        local suffix=""
+        if [[ "$dur" -ge 60 ]]; then
+            suffix="$((dur / 60))h"
+        elif [[ "$dur" -gt 0 ]]; then
+            suffix="${dur}m"
+        fi
+        result+="#[fg=red]${b}!${suffix}#[default] "
+    fi
+
+    [[ "$i" -gt 0 ]] && result+="#[fg=yellow]${i}.#[default] "
+
+    printf '%s' "${result% }" > "$CACHE.tmp"
+    mv -f "$CACHE.tmp" "$CACHE"
+}
+
+# ── status-bar ────────────────────────────────────────────────────────
+
+cmd_status_bar() {
+    [[ -f "$CACHE" ]] && cat "$CACHE"
+    true
+}
+
+# ── menu ──────────────────────────────────────────────────────────────
+
+cmd_menu() {
+    [[ -f "$DB" ]] || return 0
+
+    local rows
+    rows=$(sqlite3 -separator '|' "$DB" "PRAGMA busy_timeout=100;
+        SELECT session_id, status, project_name,
+               COALESCE(git_branch,''), COALESCE(prompt_summary,''),
+               COALESCE(tmux_target,'')
+        FROM sessions
+        ORDER BY CASE status
+            WHEN 'blocked' THEN 0 WHEN 'working' THEN 1 ELSE 2
+        END, updated_at DESC;") || true
+
+    if [[ -z "$rows" ]]; then
+        tmux display-message "No active Claude agents"
+        return
+    fi
+
+    local args=(-T "Claude Agents")
+    while IFS='|' read -r _sid status project branch prompt target; do
+        [[ -z "$_sid" ]] && continue
+        local icon label
+        case "$status" in
+            blocked) icon="!" ;;
+            working) icon="*" ;;
+            *)       icon="." ;;
+        esac
+
+        label="${icon} ${project}"
+        [[ -n "$branch" ]] && label+="/${branch}"
+        [[ -n "$prompt" ]] && label+=" | ${prompt}"
+        label="${label:0:60}"
+
+        if [[ -n "$target" ]]; then
+            local sess="${target%%:*}"
+            args+=("$label" "" "switch-client -t '${sess}' \\; select-pane -t '${target}'")
+        else
+            args+=("$label" "" "")
+        fi
+    done <<< "$rows"
+
+    tmux display-menu "${args[@]}"
+}
+
+# ── cleanup ───────────────────────────────────────────────────────────
+
+cmd_cleanup() {
+    [[ -f "$DB" ]] || return 0
+
+    sql "DELETE FROM sessions WHERE updated_at < unixepoch() - 86400;"
+
+    local alive
+    alive=$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)
+
+    if [[ -n "$alive" ]]; then
+        local rows
+        rows=$(sql "SELECT session_id, tmux_pane FROM sessions
+                    WHERE tmux_pane IS NOT NULL AND tmux_pane != '';") || true
+        while IFS='|' read -r sid pane; do
+            [[ -z "$sid" ]] && continue
+            if ! printf '%s\n' "$alive" | grep -qx "$pane"; then
+                sql "DELETE FROM sessions WHERE session_id='$sid';"
+            fi
+        done <<< "$rows"
+    fi
+
+    _render_cache
+    echo "Cleanup complete"
+}
+
+# ── main ──────────────────────────────────────────────────────────────
+
+case "${1:-}" in
+    init)       cmd_init ;;
+    hook)       cmd_hook "${2:?Usage: claude-agent-tracker hook <event>}" ;;
+    status-bar) cmd_status_bar ;;
+    menu)       cmd_menu ;;
+    cleanup)    cmd_cleanup ;;
+    *)          echo "Usage: claude-agent-tracker {init|hook|status-bar|menu|cleanup}" >&2
+                exit 1 ;;
+esac
