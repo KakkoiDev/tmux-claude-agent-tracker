@@ -5,7 +5,8 @@ TRACKER_DIR="$HOME/.claude-agent-tracker"
 DB="$TRACKER_DIR/tracker.db"
 CACHE="$TRACKER_DIR/status_cache"
 
-sql() { sqlite3 "$DB" "PRAGMA busy_timeout=100; $*"; }
+sql() { printf '.timeout 100\n%s\n' "$*" | sqlite3 "$DB"; }
+sql_sep() { local s="$1"; shift; printf '.timeout 100\n%s\n' "$*" | sqlite3 -separator "$s" "$DB"; }
 sql_esc() { printf '%s' "${1//\'/\'\'}"; }
 
 # ── init ──────────────────────────────────────────────────────────────
@@ -193,8 +194,7 @@ cmd_menu() {
     [[ -f "$DB" ]] || return 0
 
     local rows
-    rows=$(sqlite3 -separator '|' "$DB" "PRAGMA busy_timeout=100;
-        SELECT session_id, status, project_name,
+    rows=$(sql_sep '|' "SELECT session_id, status, project_name,
                COALESCE(git_branch,''), COALESCE(prompt_summary,''),
                COALESCE(tmux_target,'')
         FROM sessions
