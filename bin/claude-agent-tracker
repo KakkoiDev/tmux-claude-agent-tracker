@@ -50,11 +50,9 @@ cmd_hook() {
     case "$event" in
         SessionStart)     _hook_session_start "$sid" "$json" ;;
         UserPromptSubmit) _hook_prompt "$sid" "$json" ;;
-        PostToolUse)      sql "UPDATE sessions SET status='working', updated_at=unixepoch()
-                               WHERE session_id='$sid' AND status='blocked';" ;;
-        Stop)             sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
-                               WHERE session_id='$sid';" ;;
-        Notification)     _hook_notification "$sid" ;;
+        PostToolUse)      _hook_post_tool "$sid" "$json" ;;
+        Stop)             _hook_stop "$sid" "$json" ;;
+        Notification)     _hook_notification "$sid" "$json" ;;
         SessionEnd)       sql "DELETE FROM sessions WHERE session_id='$sid';" ;;
         SubagentStart)    _hook_subagent_start "$sid" "$json" ;;
         SubagentStop)     _hook_subagent_stop "$json" ;;
@@ -64,6 +62,32 @@ cmd_hook() {
 
     _render_cache
     tmux refresh-client -S 2>/dev/null || true
+}
+
+_ensure_session() {
+    local sid="$1" json="${2:-}"
+    local exists
+    exists=$(sql "SELECT 1 FROM sessions WHERE session_id='$sid';")
+    [[ -n "$exists" ]] && return 0
+
+    local cwd project branch pane target
+    cwd=$(printf '%s' "$json" | jq -r '.cwd // empty' 2>/dev/null) || true
+    [[ -z "$cwd" ]] && cwd="${PWD}"
+    project=$(basename "$cwd")
+    branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+    pane="${TMUX_PANE:-}"
+    target=""
+    if [[ -n "$pane" ]]; then
+        target=$(tmux display-message -t "$pane" \
+            -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
+    fi
+
+    sql "INSERT OR IGNORE INTO sessions
+         (session_id, status, cwd, project_name, git_branch, tmux_pane, tmux_target)
+         VALUES ('$sid', 'working',
+                 '$(sql_esc "$cwd")', '$(sql_esc "$project")',
+                 '$(sql_esc "$branch")', '$(sql_esc "$pane")',
+                 '$(sql_esc "$target")');"
 }
 
 _hook_session_start() {
@@ -92,6 +116,8 @@ _hook_session_start() {
 
 _hook_prompt() {
     local sid="$1" json="$2"
+    _ensure_session "$sid" "$json"
+
     local prompt
     prompt=$(printf '%s' "$json" | jq -r '(.prompt // .message // .content // "")' 2>/dev/null) || true
     prompt="${prompt:0:60}"
@@ -101,8 +127,24 @@ _hook_prompt() {
          WHERE session_id='$sid';"
 }
 
+_hook_post_tool() {
+    local sid="$1" json="$2"
+    _ensure_session "$sid" "$json"
+    sql "UPDATE sessions SET status='working', updated_at=unixepoch()
+         WHERE session_id='$sid' AND status='blocked';"
+}
+
+_hook_stop() {
+    local sid="$1" json="$2"
+    _ensure_session "$sid" "$json"
+    sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
+         WHERE session_id='$sid';"
+}
+
 _hook_notification() {
-    local sid="$1"
+    local sid="$1" json="${2:-}"
+    _ensure_session "$sid" "$json"
+
     sql "UPDATE sessions SET status='blocked', updated_at=unixepoch()
          WHERE session_id='$sid';"
     if [[ "${CLAUDE_TRACKER_SOUND:-0}" == "1" ]]; then
