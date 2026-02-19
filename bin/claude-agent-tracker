@@ -224,7 +224,8 @@ cmd_menu() {
 
         if [[ -n "$target" ]]; then
             local sess="${target%%:*}"
-            args+=("$label" "" "switch-client -t '${sess}' \\; select-pane -t '${target}'")
+            local win="${target%.*}"
+            args+=("$label" "" "switch-client -t '${sess}' \\; select-window -t '${win}' \\; select-pane -t '${target}'")
         else
             args+=("$label" "" "")
         fi
