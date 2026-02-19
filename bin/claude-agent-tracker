@@ -223,9 +223,7 @@ cmd_menu() {
         label="${label:0:60}"
 
         if [[ -n "$target" ]]; then
-            local sess="${target%%:*}"
-            local win="${target%.*}"
-            args+=("$label" "" "switch-client -t '${sess}' \\; select-window -t '${win}' \\; select-pane -t '${target}'")
+            args+=("$label" "" "run-shell 'claude-agent-tracker goto ${target}'")
         else
             args+=("$label" "" "")
         fi
@@ -260,6 +258,17 @@ cmd_cleanup() {
     echo "Cleanup complete"
 }
 
+# ── goto ──────────────────────────────────────────────────────────────
+
+cmd_goto() {
+    local target="$1"
+    local sess="${target%%:*}"
+    local win="${target%.*}"
+    tmux switch-client -t "$sess" 2>/dev/null || true
+    tmux select-window -t "$win" 2>/dev/null || true
+    tmux select-pane -t "$target" 2>/dev/null || true
+}
+
 # ── main ──────────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -267,6 +276,7 @@ case "${1:-}" in
     hook)       cmd_hook "${2:?Usage: claude-agent-tracker hook <event>}" ;;
     status-bar) cmd_status_bar ;;
     menu)       cmd_menu ;;
+    goto)       cmd_goto "${2:?Usage: claude-agent-tracker goto <target>}" ;;
     cleanup)    cmd_cleanup ;;
     *)          echo "Usage: claude-agent-tracker {init|hook|status-bar|menu|cleanup}" >&2
                 exit 1 ;;
