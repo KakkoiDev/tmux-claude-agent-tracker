@@ -2,16 +2,21 @@
 
 ## Process Boundaries
 
-```
-Claude Code (Node.js)       Hook script (bash, ~25ms)       Tmux server (C)
-      |                           |                               |
-      |--- hook JSON on stdin --->|                               |
-      |                           |--- sqlite3 write ---> DB      |
-      |                           |--- render cache --->  file    |
-      |                           |--- tmux refresh ------------->|
-      |                           |                               |
-      |                           |<-- #(status-bar) --- cat file |
-      |                           |<-- prefix+a ---- display-menu |
+```mermaid
+sequenceDiagram
+    participant C as Claude Code<br/>(Node.js)
+    participant H as Hook script<br/>(bash, ~25ms)
+    participant T as Tmux server<br/>(C)
+
+    C->>H: hook JSON on stdin
+    H->>H: sqlite3 write → DB
+    H->>H: render cache → file
+    H->>T: tmux refresh-client -S
+
+    T->>H: #(status-bar)
+    H-->>T: cat cache file
+    T->>H: prefix+a
+    H-->>T: display-menu
 ```
 
 No daemon. Each hook is a fire-and-forget bash process (~25ms). SQLite is the only shared state.
@@ -26,22 +31,19 @@ Cache write uses `mv -f` for atomicity.
 
 ## State Machine
 
-```
-                SessionStart
-                     |
-                     v
-          +-----> working <-----+
-          |          |          |
-  UserPromptSubmit  Notification  PostToolUse
-  PostToolUse      (permission)   UserPromptSubmit
-          |          |          |
-          v          v          |
-        idle      blocked ------+
-          |          |
-      SessionEnd  SessionEnd
-          |          |
-          v          v
-       (deleted)  (deleted)
+```mermaid
+stateDiagram-v2
+    [*] --> working : SessionStart
+
+    working --> idle : Stop
+    working --> blocked : Notification (permission)
+
+    idle --> working : UserPromptSubmit / PostToolUse
+    blocked --> working : UserPromptSubmit / PostToolUse
+
+    idle --> [*] : SessionEnd
+    blocked --> [*] : SessionEnd
+    working --> [*] : SessionEnd
 ```
 
 Transition guards:
