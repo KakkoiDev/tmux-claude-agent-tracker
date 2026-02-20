@@ -93,9 +93,11 @@ _ensure_session() {
             -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
     fi
 
-    # One Claude per pane — evict stale sessions on the same pane
+    # One Claude per pane — evict stale *main* sessions on the same pane.
+    # Preserve subagent entries (they have agent_type set) so idle counts stay accurate.
     if [[ -n "$pane" ]]; then
-        sql "DELETE FROM sessions WHERE tmux_pane='$(sql_esc "$pane")' AND session_id!='$sid';"
+        sql "DELETE FROM sessions WHERE tmux_pane='$(sql_esc "$pane")' AND session_id!='$sid'
+             AND (agent_type IS NULL OR agent_type='');"
     fi
 
     # Create if missing

@@ -93,6 +93,7 @@ Tmux options (set in `~/.tmux.conf`):
 | `@claude-tracker-color-blocked` | `black` | tmux color for blocked count |
 | `@claude-tracker-color-idle` | `black` | tmux color for idle count |
 | `@claude-tracker-sound` | `0` | `1` to play sound on blocked |
+| `@claude-tracker-status-interval` | `2` | tmux status-interval (seconds) for `#()` refresh |
 
 Example:
 
