@@ -400,11 +400,6 @@ cmd_scan() {
         # Check if this shell has a claude child process
         pgrep -P "$shell_pid" -xq "claude" 2>/dev/null || continue
 
-        # Already tracked by this pane?
-        local tracked
-        tracked=$(sql "SELECT 1 FROM sessions WHERE tmux_pane='$(sql_esc "$pane")';")
-        [[ -n "$tracked" ]] && continue
-
         # Get pane context
         local cwd project branch target
         cwd=$(tmux display-message -t "$pane" -p '#{pane_current_path}' 2>/dev/null) || continue
@@ -414,14 +409,16 @@ cmd_scan() {
         target=$(tmux display-message -t "$pane" \
             -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
 
-        # Use pane ID as synthetic session_id (real ID unknown)
+        # Atomic conditional insert — avoids TOCTOU race with hook-based registration.
+        # If any session already owns this pane, the INSERT is skipped entirely.
         local sid="scan-${pane}"
-        sql "INSERT OR IGNORE INTO sessions
+        sql "INSERT INTO sessions
              (session_id, status, cwd, project_name, git_branch, tmux_pane, tmux_target)
-             VALUES ('$(sql_esc "$sid")', 'idle',
-                     '$(sql_esc "$cwd")', '$(sql_esc "$project")',
-                     '$(sql_esc "$branch")', '$(sql_esc "$pane")',
-                     '$(sql_esc "$target")');"
+             SELECT '$(sql_esc "$sid")', 'idle',
+                    '$(sql_esc "$cwd")', '$(sql_esc "$project")',
+                    '$(sql_esc "$branch")', '$(sql_esc "$pane")',
+                    '$(sql_esc "$target")'
+             WHERE NOT EXISTS (SELECT 1 FROM sessions WHERE tmux_pane='$(sql_esc "$pane")');"
         changed=1
     done <<< "$pane_ids"
 
