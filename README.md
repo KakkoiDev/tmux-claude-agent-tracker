@@ -58,23 +58,22 @@ cd ~/.tmux/plugins/tmux-claude-agent-tracker
 ./install.sh
 ```
 
-### Claude Code Hook
+### Claude Code Hooks
 
-Add to `~/.claude/hooks.json`:
+`./install.sh` automatically adds the required hooks to `~/.claude/settings.json`. If you need to add them manually, add a hook entry for each event:
 
 ```json
 {
-  "hooks": [
-    {
-      "matcher": ".*",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "tmux-claude-agent-tracker hook $CLAUDE_HOOK_EVENT"
-        }
-      ]
-    }
-  ]
+  "hooks": {
+    "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook SessionStart" }] }],
+    "SessionEnd": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook SessionEnd" }] }],
+    "UserPromptSubmit": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook UserPromptSubmit" }] }],
+    "PostToolUse": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook PostToolUse" }] }],
+    "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Stop" }] }],
+    "Notification": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Notification" }] }],
+    "SubagentStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook SubagentStart" }] }],
+    "SubagentStop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook SubagentStop" }] }]
+  }
 }
 ```
 
