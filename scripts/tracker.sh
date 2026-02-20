@@ -69,7 +69,7 @@ cmd_hook() {
         Notification)     _hook_notification "$sid" "$json" ;;
         SessionEnd)       sql "DELETE FROM sessions WHERE session_id='$sid';" ;;
         SubagentStart)    _hook_subagent_start "$sid" "$json" ;;
-        SubagentStop)     _hook_subagent_stop "$json" ;;
+        SubagentStop)     return 0 ;;  # cleanup deferred to _hook_stop
         TeammateIdle)     _hook_teammate_idle "$json" ;;
         *) return 0 ;;
     esac
@@ -80,6 +80,11 @@ cmd_hook() {
 
 _ensure_session() {
     local sid="$1" json="${2:-}"
+
+    # Fast path: session already registered with pane info — skip git/tmux overhead
+    local existing
+    existing=$(sql "SELECT 1 FROM sessions WHERE session_id='$sid' AND tmux_pane != '' LIMIT 1;")
+    [[ -n "$existing" ]] && return 0
 
     local cwd project branch pane target
     cwd=$(printf '%s' "$json" | jq -r '.cwd // empty' 2>/dev/null) || true
@@ -145,14 +150,20 @@ _hook_post_tool() {
 
 _hook_stop() {
     local sid="$1" json="$2"
-    sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
+    # Atomic: clean up subagent sessions on same pane + set idle.
+    # Prevents idle count flicker between SubagentStop and Stop.
+    sql "DELETE FROM sessions
+         WHERE tmux_pane != '' AND tmux_pane IS NOT NULL
+           AND tmux_pane = (SELECT tmux_pane FROM sessions WHERE session_id='$sid')
+           AND agent_type IS NOT NULL AND agent_type != '';
+         UPDATE sessions SET status='idle', updated_at=unixepoch()
          WHERE session_id='$sid';"
 }
 
 _hook_notification() {
     local sid="$1" json="${2:-}"
     sql "UPDATE sessions SET status='blocked', updated_at=unixepoch()
-         WHERE session_id='$sid' AND status='working';"
+         WHERE session_id='$sid' AND status != 'blocked';"
     if [[ "${SOUND:-0}" == "1" ]]; then
         afplay /System/Library/Sounds/Glass.aiff &
     fi
@@ -344,12 +355,17 @@ _reap_dead() {
     done <<< "$pane_info"
 
     local rows changed=0
-    rows=$(sql "SELECT session_id, tmux_pane FROM sessions
+    rows=$(sql "SELECT session_id, tmux_pane, status FROM sessions
                 WHERE tmux_pane IS NOT NULL AND tmux_pane != '';") || return 0
-    while IFS='|' read -r sid pane; do
+    while IFS='|' read -r sid pane st; do
         [[ -z "$sid" ]] && continue
-        if ! printf '%s' "$alive_panes" | grep -qx "$pane" \
-        || ! printf '%s' "$claude_panes" | grep -qx "$pane"; then
+        # Dead pane → always delete
+        if ! printf '%s' "$alive_panes" | grep -qx "$pane"; then
+            sql "DELETE FROM sessions WHERE session_id='$sid';"
+            changed=1
+        # Live pane, no claude process, working/blocked → delete (Ctrl+C case)
+        elif [[ "$st" != "idle" ]] \
+          && ! printf '%s' "$claude_panes" | grep -qx "$pane"; then
             sql "DELETE FROM sessions WHERE session_id='$sid';"
             changed=1
         fi

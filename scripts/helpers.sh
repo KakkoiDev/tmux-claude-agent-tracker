@@ -30,9 +30,9 @@ COLOR_IDLE=""
 SOUND=""
 
 load_config() {
-    local cache="/tmp/claude-tracker-config-$$"
+    local cache="/tmp/claude-tracker-config"
 
-    # Use cache if fresh (< 60s)
+    # Use cache if fresh (< 60s) — shared across all hook invocations
     if [[ -f "$cache" ]]; then
         local age now
         now=$(date +%s)
@@ -53,8 +53,8 @@ load_config() {
     COLOR_IDLE=$(get_tmux_option "@claude-tracker-color-idle" "black")
     SOUND=$(get_tmux_option "@claude-tracker-sound" "0")
 
-    # Write cache
-    cat > "$cache" <<EOF
+    # Atomic write — safe for concurrent hook invocations
+    cat > "${cache}.tmp" <<EOF
 KEYBINDING='$KEYBINDING'
 ITEMS_PER_PAGE='$ITEMS_PER_PAGE'
 KEY_NEXT='$KEY_NEXT'
@@ -65,6 +65,7 @@ COLOR_BLOCKED='$COLOR_BLOCKED'
 COLOR_IDLE='$COLOR_IDLE'
 SOUND='$SOUND'
 EOF
+    mv -f "${cache}.tmp" "$cache"
 }
 
 # ── version check ────────────────────────────────────────────────────

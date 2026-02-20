@@ -31,10 +31,20 @@ teardown() {
     [[ "$(get_status s1)" == "blocked" ]]
 }
 
-@test "Notification does not change idle to blocked" {
+@test "Notification sets idle to blocked" {
     insert_session "s1" "idle" "%1"
     _hook_notification "s1" '{}'
-    [[ "$(get_status s1)" == "idle" ]]
+    [[ "$(get_status s1)" == "blocked" ]]
+}
+
+@test "Notification does not reset blocked timer" {
+    insert_session "s1" "blocked" "%1"
+    sql "UPDATE sessions SET updated_at = unixepoch() - 300 WHERE session_id='s1';"
+    _hook_notification "s1" '{}'
+    local ts
+    ts=$(sql "SELECT updated_at FROM sessions WHERE session_id='s1';")
+    # updated_at should still be ~300s ago, not reset
+    [[ "$ts" -lt "$(( $(date +%s) - 200 ))" ]]
 }
 
 @test "PostToolUse sets non-working to working" {
@@ -165,7 +175,7 @@ teardown() {
     [[ "$(count_sessions)" -eq 1 ]]
 }
 
-@test "_reap_dead cleans up sessions when Claude process is gone" {
+@test "_reap_dead cleans up working sessions when Claude process is gone" {
     insert_session "s1" "working" "%10"
 
     # Mock: pane %10 is alive but no claude child process
@@ -180,6 +190,21 @@ teardown() {
     _reap_dead
     [[ -z "$(get_status s1)" ]]
     [[ "$(count_sessions)" -eq 0 ]]
+}
+
+@test "_reap_dead keeps idle sessions even without claude process" {
+    insert_session "s1" "idle" "%10"
+
+    tmux() {
+        case "$1" in
+            list-panes) echo "%10 1234" ;;
+            *) true ;;
+        esac
+    }
+    pgrep() { return 1; }
+
+    _reap_dead
+    [[ "$(get_status s1)" == "idle" ]]
 }
 
 # ── Cache rendering ──────────────────────────────────────────────────
@@ -290,10 +315,45 @@ teardown() {
     [[ "$atype" == "researcher" ]]
 }
 
-@test "SubagentStop deletes subagent session" {
-    insert_session "sub1" "working" "%1" "subagent"
-    _hook_subagent_stop '{"subagent_id":"sub1"}'
-    [[ "$(count_sessions)" -eq 0 ]]
+@test "Stop atomically cleans up subagents and sets idle" {
+    insert_session "main1" "working" "%1" ""
+    insert_session "sub1" "idle" "%1" "subagent"
+    insert_session "sub2" "working" "%1" "researcher"
+    insert_session "other" "idle" "%2" ""
+
+    _hook_stop "main1" '{}'
+
+    # main1 went idle, both subagents on %1 deleted, other untouched
+    [[ "$(get_status main1)" == "idle" ]]
+    [[ -z "$(get_status sub1)" ]]
+    [[ -z "$(get_status sub2)" ]]
+    [[ "$(get_status other)" == "idle" ]]
+    [[ "$(count_sessions)" -eq 2 ]]
+}
+
+@test "idle count stays stable through subagent lifecycle" {
+    # 3 idle agents + 1 working with a subagent
+    insert_session "s1" "idle" "%1" ""
+    insert_session "s2" "idle" "%2" ""
+    insert_session "s3" "idle" "%3" ""
+    insert_session "main" "working" "%4" ""
+    insert_session "sub" "idle" "%4" "subagent"
+
+    # SubagentStop is a no-op (deferred to Stop)
+    # Simulate: PostToolUse fires, then Stop
+    _hook_post_tool "main" '{}'
+    _render_cache
+    local mid_count
+    mid_count=$(sql "SELECT COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0) FROM sessions;")
+    # sub still idle + 3 others = 4 idle (no drop)
+    [[ "$mid_count" -eq 4 ]]
+
+    _hook_stop "main" '{}'
+    _render_cache
+    local final_count
+    final_count=$(sql "SELECT COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0) FROM sessions;")
+    # sub deleted, main idle + 3 others = 4 idle
+    [[ "$final_count" -eq 4 ]]
 }
 
 # ── sql_esc ──────────────────────────────────────────────────────────
