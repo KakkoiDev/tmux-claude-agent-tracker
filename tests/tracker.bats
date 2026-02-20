@@ -120,29 +120,31 @@ teardown() {
     insert_session "s1" "working" "%99"
     insert_session "s2" "idle" "%100"
 
-    # Mock tmux list-panes: only %99 is alive
+    # Mock: only %99 is alive with claude running
     tmux() {
         case "$1" in
-            list-panes) echo "%99" ;;
+            list-panes) echo "%99 1234" ;;
             *) true ;;
         esac
     }
+    pgrep() { return 0; }
 
     _reap_dead
     [[ "$(get_status s1)" == "working" ]]
     [[ -z "$(get_status s2)" ]]
 }
 
-@test "_reap_dead keeps sessions with live panes" {
+@test "_reap_dead keeps sessions with live panes and claude process" {
     insert_session "s1" "working" "%10"
     insert_session "s2" "idle" "%11"
 
     tmux() {
         case "$1" in
-            list-panes) printf '%s\n' "%10" "%11" ;;
+            list-panes) printf '%s\n' "%10 1234" "%11 5678" ;;
             *) true ;;
         esac
     }
+    pgrep() { return 0; }
 
     _reap_dead
     [[ "$(count_sessions)" -eq 2 ]]
@@ -153,30 +155,31 @@ teardown() {
 
     tmux() {
         case "$1" in
-            list-panes) echo "%10" ;;
+            list-panes) echo "%10 1234" ;;
             *) true ;;
         esac
     }
+    pgrep() { return 0; }
 
     _reap_dead
     [[ "$(count_sessions)" -eq 1 ]]
 }
 
-@test "_reap_dead no longer uses pgrep (no false-kill on live panes)" {
+@test "_reap_dead cleans up sessions when Claude process is gone" {
     insert_session "s1" "working" "%10"
 
-    # Mock: pane %10 is alive
+    # Mock: pane %10 is alive but no claude child process
     tmux() {
         case "$1" in
-            list-panes) echo "%10" ;;
+            list-panes) echo "%10 1234" ;;
             *) true ;;
         esac
     }
-    # Even if pgrep would fail, session must survive
     pgrep() { return 1; }
 
     _reap_dead
-    [[ "$(get_status s1)" == "working" ]]
+    [[ -z "$(get_status s1)" ]]
+    [[ "$(count_sessions)" -eq 0 ]]
 }
 
 # ── Cache rendering ──────────────────────────────────────────────────

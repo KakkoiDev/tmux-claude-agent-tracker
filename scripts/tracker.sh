@@ -204,17 +204,19 @@ _hook_teammate_idle() {
 # ── render cache ──────────────────────────────────────────────────────
 
 _render_cache() {
-    local w b i dur result=""
-    w=$(sql "SELECT COUNT(*) FROM sessions WHERE status='working';")
-    b=$(sql "SELECT COUNT(*) FROM sessions WHERE status='blocked';")
-    i=$(sql "SELECT COUNT(*) FROM sessions WHERE status='idle';")
+    local counts w b i dur result=""
+    counts=$(sql_sep '|' "SELECT
+        COALESCE(SUM(CASE WHEN status='working' THEN 1 ELSE 0 END),0),
+        COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END),0),
+        COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0),
+        COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked'),0)
+        FROM sessions;")
+    IFS='|' read -r w b i dur <<< "$counts"
 
     result+="#[fg=${COLOR_IDLE}]${i}.#[default] "
     result+="#[fg=${COLOR_WORKING}]${w}*#[default] "
 
     if [[ "$b" -gt 0 ]]; then
-        dur=$(sql "SELECT (unixepoch() - MIN(updated_at)) / 60
-                   FROM sessions WHERE status='blocked';")
         local suffix=""
         if [[ "$dur" -ge 60 ]]; then
             suffix="$((dur / 60))h"
@@ -238,12 +240,12 @@ cmd_status_bar() {
     cached=$(cat "$CACHE")
 
     # If blocked sessions exist, recompute the blocked segment with live timing
-    local b
-    b=$(sql "SELECT COUNT(*) FROM sessions WHERE status='blocked';" 2>/dev/null) || b=0
+    local bdata b dur
+    bdata=$(sql_sep '|' "SELECT COUNT(*), COALESCE((unixepoch()-MIN(updated_at))/60, 0)
+                          FROM sessions WHERE status='blocked';" 2>/dev/null) || bdata="0|0"
+    IFS='|' read -r b dur <<< "$bdata"
     if [[ "$b" -gt 0 ]]; then
-        local dur suffix=""
-        dur=$(sql "SELECT (unixepoch() - MIN(updated_at)) / 60
-                   FROM sessions WHERE status='blocked';" 2>/dev/null) || dur=0
+        local suffix=""
         if [[ "$dur" -ge 60 ]]; then
             suffix="$((dur / 60))h"
         elif [[ "$dur" -gt 0 ]]; then
@@ -331,16 +333,23 @@ cmd_menu() {
 _reap_dead() {
     [[ -f "$DB" ]] || return 0
 
-    local alive_panes
-    alive_panes=$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null) || return 0
+    local pane_info
+    pane_info=$(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null) || return 0
 
-    local changed=0
-    local rows
-    rows=$(sql "SELECT session_id, tmux_pane FROM sessions WHERE tmux_pane IS NOT NULL AND tmux_pane != '';") || return 0
+    local alive_panes="" claude_panes=""
+    while read -r pane shell_pid; do
+        [[ -z "$pane" ]] && continue
+        alive_panes+="$pane"$'\n'
+        pgrep -P "$shell_pid" -xq "claude" 2>/dev/null && claude_panes+="$pane"$'\n'
+    done <<< "$pane_info"
 
+    local rows changed=0
+    rows=$(sql "SELECT session_id, tmux_pane FROM sessions
+                WHERE tmux_pane IS NOT NULL AND tmux_pane != '';") || return 0
     while IFS='|' read -r sid pane; do
         [[ -z "$sid" ]] && continue
-        if ! printf '%s\n' "$alive_panes" | grep -qx "$pane"; then
+        if ! printf '%s' "$alive_panes" | grep -qx "$pane" \
+        || ! printf '%s' "$claude_panes" | grep -qx "$pane"; then
             sql "DELETE FROM sessions WHERE session_id='$sid';"
             changed=1
         fi
