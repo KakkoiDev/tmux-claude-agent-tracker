@@ -130,13 +130,8 @@ _hook_session_start() {
 }
 
 _hook_prompt() {
-    local sid="$1" json="$2"
-    local prompt
-    prompt=$(printf '%s' "$json" | jq -r '(.prompt // .message // .content // "")' 2>/dev/null) || true
-    prompt="${prompt:0:60}"
-
-    sql "UPDATE sessions SET status='working',
-         prompt_summary='$(sql_esc "$prompt")', updated_at=unixepoch()
+    local sid="$1"
+    sql "UPDATE sessions SET status='working', updated_at=unixepoch()
          WHERE session_id='$sid';"
 }
 
@@ -247,8 +242,7 @@ cmd_menu() {
 
     local rows
     rows=$(sql_sep '|' "SELECT session_id, status, project_name,
-               COALESCE(git_branch,''), COALESCE(prompt_summary,''),
-               COALESCE(tmux_target,'')
+               COALESCE(git_branch,''), COALESCE(tmux_target,'')
         FROM sessions
         ORDER BY CASE status
             WHEN 'blocked' THEN 0 WHEN 'working' THEN 1 ELSE 2
@@ -260,7 +254,7 @@ cmd_menu() {
     fi
 
     local args=(-T "Claude Agents")
-    while IFS='|' read -r _sid status project branch prompt target; do
+    while IFS='|' read -r _sid status project branch target; do
         [[ -z "$_sid" ]] && continue
         local icon label
         case "$status" in
@@ -271,8 +265,6 @@ cmd_menu() {
 
         label="${icon} ${project}"
         [[ -n "$branch" ]] && label+="/${branch}"
-        [[ -n "$prompt" ]] && label+=" | ${prompt}"
-        label="${label:0:60}"
 
         if [[ -n "$target" ]]; then
             args+=("$label" "" "run-shell 'claude-agent-tracker goto ${target}'")
