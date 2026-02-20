@@ -15,7 +15,7 @@ CACHE="$TRACKER_DIR/status_cache"
 
 sql() { printf '.timeout 100\n%s\n' "$*" | sqlite3 "$DB"; }
 sql_sep() { local s="$1"; shift; printf '.timeout 100\n%s\n' "$*" | sqlite3 -separator "$s" "$DB"; }
-sql_esc() { printf '%s' "${1//\'/\'\'}"; }
+sql_esc() { printf '%s' "${1//\'/''}"; }
 
 # ── init ──────────────────────────────────────────────────────────────
 
@@ -242,8 +242,28 @@ _render_cache() {
 # ── status-bar ────────────────────────────────────────────────────────
 
 cmd_status_bar() {
-    [[ -f "$CACHE" ]] && cat "$CACHE"
-    true
+    [[ -f "$CACHE" ]] || return 0
+    local cached
+    cached=$(cat "$CACHE")
+
+    # If blocked sessions exist, recompute the blocked segment with live timing
+    local b
+    b=$(sql "SELECT COUNT(*) FROM sessions WHERE status='blocked';" 2>/dev/null) || b=0
+    if [[ "$b" -gt 0 ]]; then
+        local dur suffix=""
+        dur=$(sql "SELECT (unixepoch() - MIN(updated_at)) / 60
+                   FROM sessions WHERE status='blocked';" 2>/dev/null) || dur=0
+        if [[ "$dur" -ge 60 ]]; then
+            suffix="$((dur / 60))h"
+        elif [[ "$dur" -gt 0 ]]; then
+            suffix="${dur}m"
+        fi
+        local live_blocked="#[fg=${COLOR_BLOCKED}]${b}!${suffix}#[default]"
+        # Replace the cached blocked segment (N! with optional duration)
+        cached=$(printf '%s' "$cached" | sed "s/#\[fg=${COLOR_BLOCKED}\][0-9]*![0-9hm]*#\[default\]/${live_blocked}/")
+    fi
+
+    printf '%s' "$cached"
 }
 
 # ── menu ──────────────────────────────────────────────────────────────
@@ -329,24 +349,13 @@ _reap_dead() {
 
     while IFS='|' read -r sid pane; do
         [[ -z "$sid" ]] && continue
-
-        # Pane dead? Remove.
         if ! printf '%s\n' "$alive_panes" | grep -qx "$pane"; then
-            sql "DELETE FROM sessions WHERE session_id='$sid';"
-            changed=1
-            continue
-        fi
-
-        # Pane alive but no claude process? Remove.
-        local shell_pid
-        shell_pid=$(tmux display-message -t "$pane" -p '#{pane_pid}' 2>/dev/null) || continue
-        if [[ -n "$shell_pid" ]] && ! pgrep -P "$shell_pid" -xq "claude" 2>/dev/null; then
             sql "DELETE FROM sessions WHERE session_id='$sid';"
             changed=1
         fi
     done <<< "$rows"
 
-    [[ "$changed" -eq 1 ]] && _render_cache
+    if [[ "$changed" -eq 1 ]]; then _render_cache; fi
 }
 
 # ── cleanup ───────────────────────────────────────────────────────────
