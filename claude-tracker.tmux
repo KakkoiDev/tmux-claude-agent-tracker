@@ -16,9 +16,13 @@ load_config
 # Bind menu key
 tmux bind-key "$KEYBINDING" run-shell "$SCRIPTS_DIR/tracker.sh menu"
 
-# Inject status bar (only if not already present)
+# Inject status bar (strip stale entries first, then add if missing)
 current_status_right=$(tmux show-option -gqv status-right)
+# Remove legacy "#(claude-agent-tracker status-bar) | " left by old installs or session restore
+current_status_right="${current_status_right//#(claude-agent-tracker status-bar) | /}"
 status_cmd="#($SCRIPTS_DIR/tracker.sh status-bar)"
 if [[ "$current_status_right" != *"tracker.sh status-bar"* ]]; then
     tmux set -g status-right "${status_cmd} | ${current_status_right}"
+else
+    tmux set -g status-right "${current_status_right}"
 fi
