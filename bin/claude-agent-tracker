@@ -123,7 +123,7 @@ _hook_session_start() {
 
     sql "INSERT OR REPLACE INTO sessions
          (session_id, status, cwd, project_name, git_branch, tmux_pane, tmux_target)
-         VALUES ('$sid', 'working',
+         VALUES ('$sid', 'idle',
                  '$(sql_esc "$cwd")', '$(sql_esc "$project")',
                  '$(sql_esc "$branch")', '$(sql_esc "$pane")',
                  '$(sql_esc "$target")');"
