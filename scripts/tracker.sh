@@ -95,18 +95,23 @@ _ensure_session() {
 
     # One Claude per pane — evict stale *main* sessions on the same pane.
     # Preserve subagent entries (they have agent_type set) so idle counts stay accurate.
+    # Atomic: DELETE + INSERT in one sqlite3 process to prevent render seeing N-1 sessions.
     if [[ -n "$pane" ]]; then
         sql "DELETE FROM sessions WHERE tmux_pane='$(sql_esc "$pane")' AND session_id!='$sid'
-             AND (agent_type IS NULL OR agent_type='');"
+             AND (agent_type IS NULL OR agent_type='');
+             INSERT OR IGNORE INTO sessions
+             (session_id, status, cwd, project_name, git_branch, tmux_pane, tmux_target)
+             VALUES ('$sid', 'working',
+                     '$(sql_esc "$cwd")', '$(sql_esc "$project")',
+                     '$(sql_esc "$branch")', '$(sql_esc "$pane")',
+                     '$(sql_esc "$target")');"
+    else
+        sql "INSERT OR IGNORE INTO sessions
+             (session_id, status, cwd, project_name, git_branch, tmux_pane, tmux_target)
+             VALUES ('$sid', 'working',
+                     '$(sql_esc "$cwd")', '$(sql_esc "$project")',
+                     '$(sql_esc "$branch")', '', '');"
     fi
-
-    # Create if missing
-    sql "INSERT OR IGNORE INTO sessions
-         (session_id, status, cwd, project_name, git_branch, tmux_pane, tmux_target)
-         VALUES ('$sid', 'working',
-                 '$(sql_esc "$cwd")', '$(sql_esc "$project")',
-                 '$(sql_esc "$branch")', '$(sql_esc "$pane")',
-                 '$(sql_esc "$target")');"
 
     # Backfill tmux info if missing (session existed but lacked pane data)
     if [[ -n "$pane" ]]; then
@@ -118,26 +123,12 @@ _ensure_session() {
 
 _hook_session_start() {
     local sid="$1" json="$2"
-    local cwd project branch pane target
-
-    cwd=$(printf '%s' "$json" | jq -r '.cwd // empty' 2>/dev/null) || true
-    [[ -z "$cwd" ]] && cwd="${PWD}"
-    project=$(basename "$cwd")
-    branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-
-    pane="${TMUX_PANE:-}"
-    target=""
-    if [[ -n "$pane" ]]; then
-        target=$(tmux display-message -t "$pane" \
-            -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
-    fi
-
-    sql "INSERT OR REPLACE INTO sessions
-         (session_id, status, cwd, project_name, git_branch, tmux_pane, tmux_target)
-         VALUES ('$sid', 'idle',
-                 '$(sql_esc "$cwd")', '$(sql_esc "$project")',
-                 '$(sql_esc "$branch")', '$(sql_esc "$pane")',
-                 '$(sql_esc "$target")');"
+    # _ensure_session already created the row if missing.
+    # Only set idle for genuinely new sessions (never received any other hook).
+    # Guard: updated_at = started_at means the row was just created by _ensure_session.
+    sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
+         WHERE session_id='$sid' AND status='working'
+         AND updated_at = started_at;"
 }
 
 _hook_prompt() {

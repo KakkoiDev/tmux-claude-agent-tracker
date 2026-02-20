@@ -299,3 +299,35 @@ teardown() {
     run sql_esc "it's a test"
     [[ "$output" == "it''s a test" ]]
 }
+
+# ── Idle count stability (no flicker) ──────────────────────────────
+
+@test "SessionStart does not reset working session to idle" {
+    insert_session "s1" "working" "%1"
+    # Simulate time passing so updated_at != started_at
+    sql "UPDATE sessions SET updated_at = unixepoch() + 5 WHERE session_id='s1';"
+    _hook_session_start "s1" '{}'
+    [[ "$(get_status s1)" == "working" ]]
+}
+
+@test "SessionStart sets idle only for freshly created sessions" {
+    insert_session "s1" "working" "%1"
+    # Fresh session: updated_at == started_at (default from insert)
+    _hook_session_start "s1" '{}'
+    [[ "$(get_status s1)" == "idle" ]]
+}
+
+@test "atomic eviction keeps count stable during pane takeover" {
+    insert_session "old" "idle" "%1" ""
+    insert_session "other" "idle" "%2" ""
+    export TMUX_PANE="%1"
+    tmux() { echo "test:0.0"; }
+
+    _ensure_session "new" '{"cwd":"/tmp/test"}'
+    # Total count should be 2 (old evicted, new created, other untouched)
+    # Never drops to 1 between DELETE and INSERT
+    [[ "$(count_sessions)" -eq 2 ]]
+    [[ -z "$(get_status old)" ]]
+    [[ "$(get_status new)" == "working" ]]
+    [[ "$(get_status other)" == "idle" ]]
+}
