@@ -135,7 +135,7 @@ _hook_post_tool() {
     local sid="$1" json="$2"
     _ensure_session "$sid" "$json"
     sql "UPDATE sessions SET status='working', updated_at=unixepoch()
-         WHERE session_id='$sid' AND status='blocked';"
+         WHERE session_id='$sid' AND status!='working';"
 }
 
 _hook_stop() {
@@ -150,7 +150,7 @@ _hook_notification() {
     _ensure_session "$sid" "$json"
 
     sql "UPDATE sessions SET status='blocked', updated_at=unixepoch()
-         WHERE session_id='$sid';"
+         WHERE session_id='$sid' AND status='working';"
     if [[ "${CLAUDE_TRACKER_SOUND:-0}" == "1" ]]; then
         afplay /System/Library/Sounds/Glass.aiff &
     fi
@@ -207,7 +207,8 @@ _render_cache() {
     b=$(sql "SELECT COUNT(*) FROM sessions WHERE status='blocked';")
     i=$(sql "SELECT COUNT(*) FROM sessions WHERE status='idle';")
 
-    [[ "$w" -gt 0 ]] && result+="#[fg=${COLOR_WORKING}]${w}*#[default] "
+    result+="#[fg=${COLOR_IDLE}]${i}.#[default] "
+    result+="#[fg=${COLOR_WORKING}]${w}*#[default] "
 
     if [[ "$b" -gt 0 ]]; then
         dur=$(sql "SELECT (unixepoch() - MIN(updated_at)) / 60
@@ -218,10 +219,10 @@ _render_cache() {
         elif [[ "$dur" -gt 0 ]]; then
             suffix="${dur}m"
         fi
-        result+="#[fg=${COLOR_BLOCKED}]${b}!${suffix}#[default] "
+        result+="#[fg=${COLOR_BLOCKED}]${b}!${suffix}#[default]"
+    else
+        result+="#[fg=${COLOR_BLOCKED}]${b}!#[default]"
     fi
-
-    [[ "$i" -gt 0 ]] && result+="#[fg=${COLOR_IDLE}]${i}.#[default] "
 
     printf '%s' "${result% }" > "$CACHE.tmp"
     mv -f "$CACHE.tmp" "$CACHE"
