@@ -421,7 +421,7 @@ _reap_dead() {
     while read -r pane shell_pid; do
         [[ -z "$pane" ]] && continue
         alive_panes+="$pane"$'\n'
-        pgrep -P "$shell_pid" -xq "claude" 2>/dev/null && claude_panes+="$pane"$'\n'
+        pgrep -P "$shell_pid" -x "claude" >/dev/null 2>/dev/null && claude_panes+="$pane"$'\n'
     done <<< "$pane_info"
 
     local rows changed=0
@@ -495,7 +495,7 @@ cmd_scan() {
         [[ -z "$pane" ]] && continue
 
         # Check if this shell has a claude child process
-        pgrep -P "$shell_pid" -xq "claude" 2>/dev/null || continue
+        pgrep -P "$shell_pid" -x "claude" >/dev/null 2>/dev/null || continue
 
         # Get pane context
         local cwd project branch target
