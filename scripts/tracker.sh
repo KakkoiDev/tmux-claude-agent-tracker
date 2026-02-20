@@ -480,7 +480,7 @@ cmd_scan() {
     if [[ -f "$stamp" ]]; then
         local now age
         now=$(date +%s)
-        age=$(( now - $(stat -f %m "$stamp" 2>/dev/null || stat -c %Y "$stamp" 2>/dev/null || echo 0) ))
+        age=$(( now - $(_file_mtime "$stamp" 2>/dev/null || echo 0) ))
         [[ "$age" -lt 30 ]] && return 0
     fi
     touch "$stamp"

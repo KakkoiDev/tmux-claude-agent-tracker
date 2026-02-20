@@ -8,6 +8,15 @@ if [[ -z "${CLAUDE_TRACKER_PLUGIN_DIR:-}" ]]; then
 fi
 SCRIPTS_DIR="$CLAUDE_TRACKER_PLUGIN_DIR/scripts"
 
+# ── platform helpers ──────────────────────────────────────────────────
+
+_file_mtime() {
+    case "$(uname)" in
+        Darwin) stat -f %m "$1" ;;
+        *)      stat -c %Y "$1" ;;
+    esac
+}
+
 # ── tmux option helpers ──────────────────────────────────────────────
 
 get_tmux_option() {
@@ -36,7 +45,7 @@ load_config() {
     if [[ -f "$cache" ]]; then
         local age now
         now=$(date +%s)
-        age=$(( now - $(stat -f %m "$cache" 2>/dev/null || stat -c %Y "$cache" 2>/dev/null || echo 0) ))
+        age=$(( now - $(_file_mtime "$cache" 2>/dev/null || echo 0) ))
         if [[ "$age" -lt 60 ]]; then
             source "$cache"
             return
