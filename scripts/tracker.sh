@@ -6,9 +6,7 @@ set -euo pipefail
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPTS_DIR/helpers.sh"
 
-# Load config (tmux options with defaults)
-load_config 2>/dev/null || true
-
+# Config loaded lazily — only when render or sound is needed
 TRACKER_DIR="$HOME/.tmux-claude-agent-tracker"
 DB="$TRACKER_DIR/tracker.db"
 CACHE="$TRACKER_DIR/status_cache"
@@ -16,6 +14,13 @@ CACHE="$TRACKER_DIR/status_cache"
 sql() { printf '.timeout 100\n%s\n' "$*" | sqlite3 "$DB"; }
 sql_sep() { local s="$1"; shift; printf '.timeout 100\n%s\n' "$*" | sqlite3 -separator "$s" "$DB"; }
 sql_esc() { printf '%s' "${1//\'/''}"; }
+
+# Fast JSON value extraction — replaces jq for simple key lookups
+_json_val() {
+    if [[ $1 =~ \"$2\":\"([^\"]*) ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+    fi
+}
 
 # ── init ──────────────────────────────────────────────────────────────
 
@@ -49,10 +54,11 @@ cmd_hook() {
     [[ -f "$DB" ]] || return 0
     local event="$1"
     local json
-    json=$(cat) || json='{}'
+    read -r json || true
+    [[ -z "$json" ]] && json='{}'
 
     local sid
-    sid=$(printf '%s' "$json" | jq -r '.session_id // empty' 2>/dev/null) || true
+    sid=$(_json_val "$json" "session_id")
     [[ -z "$sid" ]] && return 0
 
     # Universal safety net: any non-delete hook registers the session
@@ -61,6 +67,7 @@ cmd_hook() {
         *) _ensure_session "$sid" "$json" ;;
     esac
 
+    local __changed=1
     case "$event" in
         SessionStart)     _hook_session_start "$sid" "$json" ;;
         UserPromptSubmit) _hook_prompt "$sid" "$json" ;;
@@ -74,8 +81,10 @@ cmd_hook() {
         *) return 0 ;;
     esac
 
-    _render_cache
-    tmux refresh-client -S 2>/dev/null || true
+    if [[ "$__changed" -eq 1 ]]; then
+        _render_cache
+        tmux refresh-client -S 2>/dev/null || true
+    fi
 }
 
 _ensure_session() {
@@ -87,7 +96,7 @@ _ensure_session() {
     [[ -n "$existing" ]] && return 0
 
     local cwd project branch pane target
-    cwd=$(printf '%s' "$json" | jq -r '.cwd // empty' 2>/dev/null) || true
+    cwd=$(_json_val "$json" "cwd")
     [[ -z "$cwd" ]] && cwd="${PWD}"
     project=$(basename "$cwd")
     branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
@@ -131,9 +140,12 @@ _hook_session_start() {
     # _ensure_session already created the row if missing.
     # Only set idle for genuinely new sessions (never received any other hook).
     # Guard: updated_at = started_at means the row was just created by _ensure_session.
-    sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
+    local c
+    c=$(sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
          WHERE session_id='$sid' AND status='working'
-         AND updated_at = started_at;"
+         AND updated_at = started_at;
+         SELECT changes();")
+    if [[ "$c" == "0" ]]; then __changed=0; fi
 }
 
 _hook_prompt() {
@@ -144,8 +156,11 @@ _hook_prompt() {
 
 _hook_post_tool() {
     local sid="$1" json="$2"
-    sql "UPDATE sessions SET status='working', updated_at=unixepoch()
-         WHERE session_id='$sid' AND status!='working';"
+    local c
+    c=$(sql "UPDATE sessions SET status='working', updated_at=unixepoch()
+         WHERE session_id='$sid' AND status!='working';
+         SELECT changes();")
+    if [[ "$c" == "0" ]]; then __changed=0; fi
 }
 
 _hook_stop() {
@@ -162,10 +177,15 @@ _hook_stop() {
 
 _hook_notification() {
     local sid="$1" json="${2:-}"
-    sql "UPDATE sessions SET status='blocked', updated_at=unixepoch()
-         WHERE session_id='$sid' AND status != 'blocked';"
-    if [[ "${SOUND:-0}" == "1" ]]; then
-        afplay /System/Library/Sounds/Glass.aiff &
+    local c
+    c=$(sql "UPDATE sessions SET status='blocked', updated_at=unixepoch()
+         WHERE session_id='$sid' AND status != 'blocked';
+         SELECT changes();")
+    if [[ "$c" == "0" ]]; then
+        __changed=0
+    else
+        [[ -z "${SOUND:-}" ]] && { load_config 2>/dev/null || true; }
+        [[ "${SOUND:-0}" == "1" ]] && afplay /System/Library/Sounds/Glass.aiff &
     fi
 }
 
@@ -173,14 +193,15 @@ _hook_subagent_start() {
     local sid="$1" json="$2"
     local sub_id cwd project branch atype pane target
 
-    sub_id=$(printf '%s' "$json" | jq -r '.subagent_id // empty' 2>/dev/null) || true
+    sub_id=$(_json_val "$json" "subagent_id")
     [[ -z "$sub_id" ]] && sub_id="$sid"
 
-    cwd=$(printf '%s' "$json" | jq -r '.cwd // empty' 2>/dev/null) || true
+    cwd=$(_json_val "$json" "cwd")
     [[ -z "$cwd" ]] && cwd="${PWD}"
     project=$(basename "$cwd")
     branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-    atype=$(printf '%s' "$json" | jq -r '.subagent_type // "subagent"' 2>/dev/null) || true
+    atype=$(_json_val "$json" "subagent_type")
+    [[ -z "$atype" ]] && atype="subagent"
 
     pane="${TMUX_PANE:-}"
     target=""
@@ -200,14 +221,16 @@ _hook_subagent_start() {
 _hook_subagent_stop() {
     local json="$1"
     local sub_id
-    sub_id=$(printf '%s' "$json" | jq -r '.subagent_id // .session_id // empty' 2>/dev/null) || true
+    sub_id=$(_json_val "$json" "subagent_id")
+    [[ -z "$sub_id" ]] && sub_id=$(_json_val "$json" "session_id")
     [[ -n "$sub_id" ]] && sql "DELETE FROM sessions WHERE session_id='$sub_id';"
 }
 
 _hook_teammate_idle() {
     local json="$1"
     local tid
-    tid=$(printf '%s' "$json" | jq -r '.teammate_id // .session_id // empty' 2>/dev/null) || true
+    tid=$(_json_val "$json" "teammate_id")
+    [[ -z "$tid" ]] && tid=$(_json_val "$json" "session_id")
     [[ -n "$tid" ]] && sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
                             WHERE session_id='$tid';"
 }
@@ -215,6 +238,8 @@ _hook_teammate_idle() {
 # ── render cache ──────────────────────────────────────────────────────
 
 _render_cache() {
+    [[ -z "${COLOR_WORKING:-}" ]] && { load_config 2>/dev/null || true; }
+
     local counts w b i dur result=""
     counts=$(sql_sep '|' "SELECT
         COALESCE(SUM(CASE WHEN status='working' THEN 1 ELSE 0 END),0),
@@ -247,6 +272,8 @@ _render_cache() {
 
 cmd_status_bar() {
     [[ -f "$CACHE" ]] || return 0
+    [[ -z "${COLOR_BLOCKED:-}" ]] && { load_config 2>/dev/null || true; }
+
     local cached
     cached=$(cat "$CACHE")
 
@@ -274,6 +301,7 @@ cmd_status_bar() {
 
 cmd_menu() {
     [[ -f "$DB" ]] || return 0
+    [[ -z "${ITEMS_PER_PAGE:-}" ]] && { load_config 2>/dev/null || true; }
 
     local page="${1:-1}"
     local items_per_page="${ITEMS_PER_PAGE:-10}"
