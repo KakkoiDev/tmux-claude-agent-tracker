@@ -22,6 +22,14 @@ _json_val() {
     fi
 }
 
+# Render SQL fragment — used by combined hook+render and standalone _render_cache
+_RENDER_SQL="SELECT
+    COALESCE(SUM(CASE WHEN status='working' THEN 1 ELSE 0 END),0) || '|' ||
+    COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END),0) || '|' ||
+    COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0) || '|' ||
+    COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked'),0)
+    FROM sessions"
+
 # ── init ──────────────────────────────────────────────────────────────
 
 cmd_init() {
@@ -61,19 +69,21 @@ cmd_hook() {
     sid=$(_json_val "$json" "session_id")
     [[ -z "$sid" ]] && return 0
 
-    # Universal safety net: any non-delete hook registers the session
+    # _ensure_session only for hooks that may create sessions.
+    # Hot-path hooks (PostToolUse, Notification, Stop, TeammateIdle) skip this
+    # — their UPDATEs are no-ops if session doesn't exist yet.
     case "$event" in
-        SessionEnd|SubagentStop) ;;
-        *) _ensure_session "$sid" "$json" ;;
+        SessionStart|UserPromptSubmit|SubagentStart)
+            _ensure_session "$sid" "$json" ;;
     esac
 
-    local __changed=1
+    local __changed=1 __render=""
     case "$event" in
         SessionStart)     _hook_session_start "$sid" "$json" ;;
         UserPromptSubmit) _hook_prompt "$sid" "$json" ;;
-        PostToolUse)      _hook_post_tool "$sid" "$json" ;;
+        PostToolUse)      _hook_post_tool "$sid" ;;
         Stop)             _hook_stop "$sid" "$json" ;;
-        Notification)     _hook_notification "$sid" "$json" ;;
+        Notification)     _hook_notification "$sid" ;;
         SessionEnd)       sql "DELETE FROM sessions WHERE session_id='$sid';" ;;
         SubagentStart)    _hook_subagent_start "$sid" "$json" ;;
         SubagentStop)     return 0 ;;  # cleanup deferred to _hook_stop
@@ -81,13 +91,19 @@ cmd_hook() {
         *) return 0 ;;
     esac
 
-    if [[ "$__changed" -eq 1 ]]; then
+    if [[ -n "$__render" ]]; then
+        # Fast path: render data already fetched in same sqlite3 call
+        _load_config_fast
+        _write_cache "$__render"
+        tmux refresh-client -S 2>/dev/null || true
+    elif [[ "$__changed" -eq 1 ]]; then
         _render_cache
         tmux refresh-client -S 2>/dev/null || true
-        # Sound after render — config already loaded by _render_cache
-        if [[ "$event" == "Notification" && "${SOUND:-0}" == "1" ]]; then
-            afplay /System/Library/Sounds/Glass.aiff &
-        fi
+    fi
+
+    # Sound after render — config already loaded
+    if [[ "$event" == "Notification" && -n "$__render" && "${SOUND:-0}" == "1" ]]; then
+        afplay /System/Library/Sounds/Glass.aiff &
     fi
 }
 
@@ -158,13 +174,13 @@ _hook_prompt() {
          WHERE session_id='$sid';"
 }
 
+# Hot path: UPDATE + render in one sqlite3 call
 _hook_post_tool() {
-    local sid="$1" json="$2"
-    local c
-    c=$(sql "UPDATE sessions SET status='working', updated_at=unixepoch()
+    local sid="$1"
+    __render=$(sql "UPDATE sessions SET status='working', updated_at=unixepoch()
          WHERE session_id='$sid' AND status!='working';
-         SELECT changes();")
-    if [[ "$c" == "0" ]]; then __changed=0; fi
+         SELECT CASE WHEN changes() = 0 THEN '' ELSE ($_RENDER_SQL) END;")
+    if [[ -z "$__render" ]]; then __changed=0; fi
 }
 
 _hook_stop() {
@@ -179,13 +195,13 @@ _hook_stop() {
          WHERE session_id='$sid';"
 }
 
+# Hot path: UPDATE + render in one sqlite3 call
 _hook_notification() {
-    local sid="$1" json="${2:-}"
-    local c
-    c=$(sql "UPDATE sessions SET status='blocked', updated_at=unixepoch()
+    local sid="$1"
+    __render=$(sql "UPDATE sessions SET status='blocked', updated_at=unixepoch()
          WHERE session_id='$sid' AND status != 'blocked';
-         SELECT changes();")
-    if [[ "$c" == "0" ]]; then __changed=0; fi
+         SELECT CASE WHEN changes() = 0 THEN '' ELSE ($_RENDER_SQL) END;")
+    if [[ -z "$__render" ]]; then __changed=0; fi
 }
 
 _hook_subagent_start() {
@@ -236,18 +252,23 @@ _hook_teammate_idle() {
 
 # ── render cache ──────────────────────────────────────────────────────
 
-_render_cache() {
-    [[ -z "${COLOR_WORKING:-}" ]] && { load_config 2>/dev/null || true; }
+# Fast config: source cache file directly, skip date+stat freshness check.
+# Full load_config (with freshness) runs on status-bar/menu paths.
+_load_config_fast() {
+    [[ -n "${COLOR_WORKING:-}" ]] && return 0
+    local _cc="/tmp/claude-tracker-config"
+    if [[ -f "$_cc" ]]; then
+        source "$_cc"
+    else
+        load_config 2>/dev/null || true
+    fi
+}
 
-    local counts w b i dur result=""
-    counts=$(sql_sep '|' "SELECT
-        COALESCE(SUM(CASE WHEN status='working' THEN 1 ELSE 0 END),0),
-        COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END),0),
-        COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0),
-        COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked'),0)
-        FROM sessions;")
-    IFS='|' read -r w b i dur <<< "$counts"
-
+# Write formatted cache from pre-fetched "w|b|i|dur" data
+_write_cache() {
+    local w b i dur
+    IFS='|' read -r w b i dur <<< "$1"
+    local result=""
     result+="#[fg=${COLOR_IDLE}]${i}.#[default] "
     result+="#[fg=${COLOR_WORKING}]${w}*#[default] "
 
@@ -265,6 +286,19 @@ _render_cache() {
 
     printf '%s' "${result% }" > "$CACHE.tmp"
     mv -f "$CACHE.tmp" "$CACHE"
+}
+
+_render_cache() {
+    [[ -z "${COLOR_WORKING:-}" ]] && { load_config 2>/dev/null || true; }
+
+    local counts
+    counts=$(sql_sep '|' "SELECT
+        COALESCE(SUM(CASE WHEN status='working' THEN 1 ELSE 0 END),0),
+        COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END),0),
+        COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0),
+        COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked'),0)
+        FROM sessions;")
+    _write_cache "$counts"
 }
 
 # ── status-bar ────────────────────────────────────────────────────────
