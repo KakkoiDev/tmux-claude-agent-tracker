@@ -5,7 +5,7 @@
 ```mermaid
 sequenceDiagram
     participant C as Claude Code<br/>(Node.js)
-    participant H as Hook script<br/>(bash, ~25ms)
+    participant H as Hook script<br/>(bash, ~65-77ms)
     participant T as Tmux server<br/>(C)
 
     C->>H: hook JSON on stdin
@@ -19,7 +19,7 @@ sequenceDiagram
     H-->>T: display-menu
 ```
 
-No daemon. Each hook is a fire-and-forget bash process (~25ms). SQLite is the only shared state.
+No daemon. Each hook is a fire-and-forget bash process. SQLite is the only shared state.
 
 ## Push/Pull Split
 
@@ -50,11 +50,62 @@ Transition guards:
 - `Stop` -> idle (unconditional)
 - `UserPromptSubmit` -> working (unconditional, handles idle->working and blocked->working)
 - `PostToolUse` -> working (`WHERE status!='working'`, no-op when already working)
-- `Notification` -> blocked (`WHERE status='working'`, prevents re-blocking after permission granted)
+- `Notification` -> blocked (`WHERE status != 'blocked'`, no-op if already blocked)
+
+## Hook Performance
+
+State-changing hooks run in ~77ms. No-op hooks (e.g. PostToolUse when already working) run in ~65ms.
+
+### Hot path optimizations
+
+PostToolUse and Notification are the most frequent state-changing hooks. They use a combined SQL pattern that does UPDATE + render query in a single sqlite3 call:
+
+```sql
+UPDATE sessions SET status='...', updated_at=unixepoch()
+    WHERE session_id='...' AND status != '...';
+SELECT CASE WHEN changes() = 0 THEN '' ELSE (render query) END;
+```
+
+If `changes() = 0`, the hook is a no-op — skip render, skip tmux refresh.
+
+These hooks also skip `_ensure_session` (the session is guaranteed to exist by the time PostToolUse or Notification fires). This eliminates 2 sqlite3 calls from the hot path.
+
+### Config loading
+
+`load_config` (helpers.sh) fetches tmux options and caches them to `/tmp/claude-tracker-config`. The full check runs `date` + `stat` to verify freshness (~8ms in subprocesses).
+
+Hook path uses `_load_config_fast` which sources the cache file directly without freshness check. Non-hook paths (status-bar, menu) use the full `load_config` with 60s TTL.
+
+### Cost breakdown (state-changing hook)
+
+| Cost | Source |
+|------|--------|
+| ~7ms | bash startup + source helpers.sh |
+| ~9ms | sqlite3 (combined UPDATE + render) |
+| ~5ms | source config cache |
+| ~6ms | write cache file (printf + mv) |
+| ~7ms | tmux refresh-client -S |
+
+### Asymmetric transition latency
+
+`blocked → working` (PostToolUse) feels faster than `working → blocked` (Notification) despite identical script execution times. The delay is upstream in Claude Code — there is a gap between when Claude decides it needs permission and when it fires the Notification hook. This is outside the tracker's control.
+
+### What was eliminated
+
+| Removed | Savings |
+|---------|---------|
+| `jq` (5 calls per hook) | ~15ms (subprocess spawns) |
+| `cat` for stdin | ~3ms (replaced with `read -r`) |
+| `_ensure_session` on hot path | ~7ms (1 fewer sqlite3) |
+| Separate render sqlite3 call | ~8ms (batched into hook SQL) |
+| `date`+`stat` in config check | ~8ms (source file directly) |
+| render+refresh on no-ops | ~15ms (skip via `SELECT changes()`) |
 
 ## Self-Healing (_ensure_session)
 
-Called at the top of every non-delete hook. Registers the session if missing, backfills tmux pane data if incomplete.
+Called for session-creating hooks (SessionStart, UserPromptSubmit, SubagentStart). Registers the session if missing, backfills tmux pane data if incomplete.
+
+Hot-path hooks (PostToolUse, Notification, Stop, TeammateIdle) skip this — their UPDATEs are safe no-ops if the session doesn't exist yet.
 
 Handles: missed SessionStart, lost tracking, missing tmux info.
 
@@ -69,7 +120,7 @@ Sessions can leak (crashes, killed panes). Three cleanup mechanisms:
 2. **`_reap_dead`** (status-bar path): cross-references `tmux list-panes` with stored pane IDs, deletes dead ones
 3. **`cmd_cleanup`** (manual): deletes sessions older than 24h + dead pane check
 
-`_reap_dead` only checks pane liveness. No process inspection (pgrep is unreliable on macOS with nodenv/nvm reparenting).
+`_reap_dead` checks pane liveness via `tmux list-panes` and process inspection via `pgrep`. Working/blocked sessions on live panes without a claude child process are cleaned up (Ctrl+C case).
 
 ## SQLite as IPC
 
