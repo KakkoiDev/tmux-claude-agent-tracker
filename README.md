@@ -102,13 +102,18 @@ Transition guards prevent stuck states:
 - `PostToolUse` sets working if not already working (`WHERE status!='working'`). Fires on every tool use but is a no-op when already working (~5ms). Unblocks from both `blocked` and `idle`.
 - `Notification` only blocks if currently working (`WHERE status='working'`). Prevents late/duplicate notifications from re-blocking a session after permission was already granted.
 
-### Lazy Registration (_ensure_session)
+### Self-Healing Registration (_ensure_session)
 
-Sessions running before hooks were configured never fired `SessionStart`. The `_ensure_session` pattern: every UPDATE-based hook does a SELECT + conditional INSERT OR IGNORE before updating. If the session exists (common case), one extra SELECT (~2ms). If missing (first contact), creates the row from environment context (`$PWD`, `$TMUX_PANE`, git branch).
+Called **once at the top of every non-delete hook dispatch**, before the event-specific handler. This is the universal safety net -- any hook contact from any Claude session registers it if missing and backfills incomplete data.
+
+Handles these edge cases without special-casing:
+- **Missed SessionStart**: session opened before hooks were configured, or hook failed silently. Next tool use, prompt, stop, or notification registers it.
+- **Lost tracking**: `SessionEnd` fired spuriously (reconnection, crash recovery). Next hook re-creates the session.
+- **Missing tmux info**: session was created without pane data (non-tmux env, or pane info unavailable at creation time). Every subsequent hook backfills `tmux_pane` and `tmux_target` if they're empty and `$TMUX_PANE` is set.
 
 Two INSERT strategies:
 - `SessionStart` uses `INSERT OR REPLACE` -- full upsert, authoritative
-- `_ensure_session` uses `INSERT OR IGNORE` -- never overwrites authoritative data
+- `_ensure_session` uses `INSERT OR IGNORE` -- never overwrites authoritative data, only fills gaps
 
 ### SQLite as IPC
 
