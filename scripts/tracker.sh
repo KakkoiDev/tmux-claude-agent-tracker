@@ -84,6 +84,10 @@ cmd_hook() {
     if [[ "$__changed" -eq 1 ]]; then
         _render_cache
         tmux refresh-client -S 2>/dev/null || true
+        # Sound after render — config already loaded by _render_cache
+        if [[ "$event" == "Notification" && "${SOUND:-0}" == "1" ]]; then
+            afplay /System/Library/Sounds/Glass.aiff &
+        fi
     fi
 }
 
@@ -181,12 +185,7 @@ _hook_notification() {
     c=$(sql "UPDATE sessions SET status='blocked', updated_at=unixepoch()
          WHERE session_id='$sid' AND status != 'blocked';
          SELECT changes();")
-    if [[ "$c" == "0" ]]; then
-        __changed=0
-    else
-        [[ -z "${SOUND:-}" ]] && { load_config 2>/dev/null || true; }
-        [[ "${SOUND:-0}" == "1" ]] && afplay /System/Library/Sounds/Glass.aiff &
-    fi
+    if [[ "$c" == "0" ]]; then __changed=0; fi
 }
 
 _hook_subagent_start() {
