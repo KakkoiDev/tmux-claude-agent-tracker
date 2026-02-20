@@ -23,11 +23,13 @@ Requires: `sqlite3`, `jq`, `tmux`. Symlinks to `~/.local/bin`.
 
 ## Status Bar Format
 
-`2* 1!3m 1.` -- count per status, blocked shows duration
+`0. 2* 1!3m` -- all three counts always visible, blocked shows duration
 
+- `.` = idle
 - `*` = working
 - `!` = blocked (with duration suffix)
-- `.` = idle
+
+Always renders all counts (including zero) so the status bar is stable and you can confirm tracking is active at a glance.
 
 ## Configuration
 
@@ -94,10 +96,11 @@ Three states, enforced by CHECK constraint:
            (deleted)  (deleted)
 ```
 
-Transitions are permissive in code:
+Transition guards prevent stuck states:
 - `Stop` sets idle unconditionally
 - `UserPromptSubmit` sets working unconditionally (handles idle->working AND blocked->working)
-- `PostToolUse` is conditional: `WHERE status='blocked'` -- performance optimization since it fires on every tool use. No-op 99% of the time (~5ms).
+- `PostToolUse` sets working if not already working (`WHERE status!='working'`). Fires on every tool use but is a no-op when already working (~5ms). Unblocks from both `blocked` and `idle`.
+- `Notification` only blocks if currently working (`WHERE status='working'`). Prevents late/duplicate notifications from re-blocking a session after permission was already granted.
 
 ### Lazy Registration (_ensure_session)
 
@@ -172,17 +175,17 @@ Sessions can leak (Claude crashes, network drops, pane killed). `cleanup` handle
 
 ## Hook Events
 
-| Hook | Matcher | State Transition |
-|------|---------|-----------------|
-| SessionStart | -- | (new) -> working |
-| UserPromptSubmit | -- | idle/blocked -> working |
-| PostToolUse | -- | blocked -> working (conditional) |
-| Stop | -- | working -> idle |
-| Notification | `permission_prompt` | working -> blocked |
-| SessionEnd | -- | any -> (deleted) |
-| SubagentStart | -- | (new) -> working |
-| SubagentStop | -- | any -> (deleted) |
-| TeammateIdle | -- | any -> idle |
+| Hook | Matcher | State Transition | Guard |
+|------|---------|-----------------|-------|
+| SessionStart | -- | (new) -> working | INSERT OR REPLACE |
+| UserPromptSubmit | -- | any -> working | unconditional |
+| PostToolUse | -- | blocked/idle -> working | `status!='working'` |
+| Stop | -- | any -> idle | unconditional |
+| Notification | `permission_prompt` | working -> blocked | `status='working'` |
+| SessionEnd | -- | any -> (deleted) | unconditional |
+| SubagentStart | -- | (new) -> working | INSERT OR REPLACE |
+| SubagentStop | -- | any -> (deleted) | unconditional |
+| TeammateIdle | -- | any -> idle | unconditional |
 
 ## Database Schema
 
