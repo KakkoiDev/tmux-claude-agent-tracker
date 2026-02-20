@@ -30,10 +30,4 @@ else
     echo "Already in $TMUX_CONF"
 fi
 
-# Set up status-right if not configured
-if ! tmux show-option -gqv status-right 2>/dev/null | grep -q "tracker.sh status-bar"; then
-    current=$(tmux show-option -gqv status-right 2>/dev/null || echo "%H:%M %d-%b-%y")
-    tmux set -g status-right "#($SCRIPT_DIR/scripts/tracker.sh status-bar) | $current" 2>/dev/null || true
-fi
-
 echo "Installed. Reload tmux: tmux source ~/.tmux.conf"
