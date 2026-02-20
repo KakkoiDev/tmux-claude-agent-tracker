@@ -278,20 +278,21 @@ teardown() {
 
 # ── cmd_status_bar live timer ────────────────────────────────────────
 
-@test "cmd_status_bar recomputes blocked timer from DB" {
+@test "cmd_status_bar is a pure cache read" {
     insert_session "b1" "blocked" "%1"
     insert_session "w1" "working" "%2"
 
     # Render cache with current time (0m)
     _render_cache
+    local cached
+    cached=$(cat "$CACHE")
 
-    # Now backdate the blocked session to 10 min ago
+    # Backdate the blocked session — status-bar should NOT recompute
     sql "UPDATE sessions SET updated_at = unixepoch() - 600 WHERE session_id='b1';"
 
-    # cmd_status_bar should show live 10m, not the cached 0m
     local out
     out=$(cmd_status_bar)
-    [[ "$out" == *"1!10m"* ]]
+    [[ "$out" == "$cached" ]]
 }
 
 @test "cmd_status_bar returns cached output when no blocked" {

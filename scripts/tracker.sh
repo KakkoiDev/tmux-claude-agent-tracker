@@ -100,6 +100,12 @@ cmd_hook() {
         *) return 0 ;;
     esac
 
+    # Reap stale sessions on events that create/wake sessions
+    case "$event" in
+        SessionStart|UserPromptSubmit)
+            _reap_dead 2>/dev/null || true ;;
+    esac
+
     if [[ -n "$__render" ]]; then
         # Fast path: render data already fetched in same sqlite3 call
         _load_config_fast
@@ -313,30 +319,7 @@ _render_cache() {
 # ── status-bar ────────────────────────────────────────────────────────
 
 cmd_status_bar() {
-    [[ -f "$CACHE" ]] || return 0
-    [[ -z "${COLOR_BLOCKED:-}" ]] && { load_config 2>/dev/null || true; }
-
-    local cached
-    cached=$(cat "$CACHE")
-
-    # If blocked sessions exist, recompute the blocked segment with live timing
-    local bdata b dur
-    bdata=$(sql_sep '|' "SELECT COUNT(*), COALESCE((unixepoch()-MIN(updated_at))/60, 0)
-                          FROM sessions WHERE status='blocked';" 2>/dev/null) || bdata="0|0"
-    IFS='|' read -r b dur <<< "$bdata"
-    if [[ "$b" -gt 0 ]]; then
-        local suffix=""
-        if [[ "$dur" -ge 60 ]]; then
-            suffix="$((dur / 60))h"
-        elif [[ "$dur" -gt 0 ]]; then
-            suffix="${dur}m"
-        fi
-        local live_blocked="#[fg=${COLOR_BLOCKED}]${b}!${suffix}#[default]"
-        # Replace the cached blocked segment (N! with optional duration)
-        cached=$(printf '%s' "$cached" | sed "s/#\[fg=${COLOR_BLOCKED}\][0-9]*![0-9hm]*#\[default\]/${live_blocked}/")
-    fi
-
-    printf '%s' "$cached"
+    [[ -f "$CACHE" ]] && cat "$CACHE"
 }
 
 # ── menu ──────────────────────────────────────────────────────────────
@@ -538,7 +521,7 @@ cmd_goto() {
 case "${1:-}" in
     init)       cmd_init ;;
     hook)       cmd_hook "${2:?Usage: tracker.sh hook <event>}" ;;
-    status-bar) _reap_dead 2>/dev/null || true; cmd_scan 2>/dev/null || true; cmd_status_bar ;;
+    status-bar) cmd_status_bar ;;
     menu)       _reap_dead 2>/dev/null || true; cmd_scan 2>/dev/null || true; cmd_menu "${2:-1}" ;;
     goto)       cmd_goto "${2:?Usage: tracker.sh goto <target>}" ;;
     scan)       cmd_scan ;;

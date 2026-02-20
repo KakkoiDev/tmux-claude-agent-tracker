@@ -16,16 +16,6 @@ load_config
 # Bind menu key
 tmux bind-key "$KEYBINDING" run-shell "$SCRIPTS_DIR/tracker.sh menu"
 
-# Set a fast status-interval so #() cache refreshes quickly after hook updates.
-# The status-bar command just cats a pre-rendered file, so low intervals are cheap.
-desired_interval=$(tmux show-option -gqv "@claude-tracker-status-interval" 2>/dev/null)
-desired_interval="${desired_interval:-2}"
-current_interval=$(tmux show-option -gqv status-interval 2>/dev/null)
-current_interval="${current_interval:-15}"
-if [[ "$current_interval" -gt "$desired_interval" ]]; then
-    tmux set -g status-interval "$desired_interval"
-fi
-
 # Inject status bar (strip stale entries first, then add if missing)
 current_status_right=$(tmux show-option -gqv status-right)
 # Remove legacy "#(claude-agent-tracker status-bar) | " left by old installs or session restore
