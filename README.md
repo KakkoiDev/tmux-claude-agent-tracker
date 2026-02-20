@@ -1,6 +1,6 @@
 # tmux-claude-agent-tracker
 
-Track Claude Code sessions in your tmux status bar. Hook-driven, no daemon, no polling.
+Track [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agent sessions in your tmux status bar. Hook-driven, no daemon, no polling.
 
 ## Status Bar
 
@@ -28,12 +28,24 @@ Claude Agents
 Quit      q
 ```
 
+## How It Works
+
+- Claude Code hooks fire on session events (start, stop, tool use, permission request)
+- Each hook writes to a local SQLite database (~25ms)
+- A pre-rendered cache file is updated and tmux refreshes
+- Status bar reads the cache file (sub-millisecond)
+- Dead sessions are automatically reaped via tmux pane cross-referencing
+
+No background daemon. No polling. Pure event-driven tracking.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
+
 ## Install
 
 ### TPM
 
 ```bash
-set -g @plugin 'your-user/tmux-claude-agent-tracker'
+set -g @plugin 'KakkoiDev/tmux-claude-agent-tracker'
 ```
 
 Then `prefix + I`.
@@ -41,10 +53,36 @@ Then `prefix + I`.
 ### Manual
 
 ```bash
+git clone https://github.com/KakkoiDev/tmux-claude-agent-tracker.git ~/.tmux/plugins/tmux-claude-agent-tracker
+cd ~/.tmux/plugins/tmux-claude-agent-tracker
 ./install.sh
 ```
 
-Requires: `sqlite3`, `jq`, `tmux 3.0+`.
+### Claude Code Hook
+
+Add to `~/.claude/hooks.json`:
+
+```json
+{
+  "hooks": [
+    {
+      "matcher": ".*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "tmux-claude-agent-tracker hook $CLAUDE_HOOK_EVENT"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Requirements
+
+- `tmux 3.0+`
+- `sqlite3`
+- `jq`
 
 ## Configuration
 
@@ -66,6 +104,7 @@ Set in `~/.tmux.conf`:
 ```bash
 set -g @claude-tracker-color-working 'green'
 set -g @claude-tracker-color-blocked 'red'
+set -g @claude-tracker-color-idle 'yellow'
 ```
 
 ## Commands
@@ -85,6 +124,6 @@ set -g @claude-tracker-color-blocked 'red'
 bats tests/
 ```
 
-## Technical Details
+## License
 
-See [ARCHITECTURE.md](ARCHITECTURE.md).
+MIT
