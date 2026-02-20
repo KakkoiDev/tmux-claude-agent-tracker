@@ -64,7 +64,7 @@ source_tracker_functions() {
     get_tmux_option() { echo "${2:-}"; }
     tmux() { true; }
     git() { true; }
-    afplay() { true; }
+    _play_sound() { true; }
 
     # Use awk to strip shebang, set -euo, source line, load_config, and case block
     # Then sed to override path variables with test paths

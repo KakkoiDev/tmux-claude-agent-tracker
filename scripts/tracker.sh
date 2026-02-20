@@ -13,7 +13,7 @@ CACHE="$TRACKER_DIR/status_cache"
 
 sql() { printf '.timeout 100\n%s\n' "$*" | sqlite3 "$DB"; }
 sql_sep() { local s="$1"; shift; printf '.timeout 100\n%s\n' "$*" | sqlite3 -separator "$s" "$DB"; }
-sql_esc() { printf '%s' "${1//\'/''}"; }
+sql_esc() { local q="'"; printf '%s' "${1//$q/$q$q}"; }
 
 # Fast JSON value extraction — replaces jq for simple key lookups
 _json_val() {
@@ -29,6 +29,15 @@ _RENDER_SQL="SELECT
     COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0) || '|' ||
     COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked'),0)
     FROM sessions"
+
+_play_sound() {
+    case "$(uname)" in
+        Darwin) afplay /System/Library/Sounds/Glass.aiff ;;
+        *)      paplay /usr/share/sounds/freedesktop/stereo/complete.oga 2>/dev/null \
+                || aplay /usr/share/sounds/freedesktop/stereo/complete.oga 2>/dev/null \
+                || true ;;
+    esac
+}
 
 # ── init ──────────────────────────────────────────────────────────────
 
@@ -103,7 +112,7 @@ cmd_hook() {
 
     # Sound after render — config already loaded
     if [[ "$event" == "Notification" && -n "$__render" && "${SOUND:-0}" == "1" ]]; then
-        afplay /System/Library/Sounds/Glass.aiff &
+        _play_sound &
     fi
 }
 
@@ -471,7 +480,7 @@ cmd_scan() {
     if [[ -f "$stamp" ]]; then
         local now age
         now=$(date +%s)
-        age=$(( now - $(stat -f %m "$stamp" 2>/dev/null || echo 0) ))
+        age=$(( now - $(stat -f %m "$stamp" 2>/dev/null || stat -c %Y "$stamp" 2>/dev/null || echo 0) ))
         [[ "$age" -lt 30 ]] && return 0
     fi
     touch "$stamp"
