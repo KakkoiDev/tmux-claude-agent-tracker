@@ -51,6 +51,12 @@ cmd_hook() {
     sid=$(printf '%s' "$json" | jq -r '.session_id // empty' 2>/dev/null) || true
     [[ -z "$sid" ]] && return 0
 
+    # Universal safety net: any non-delete hook registers the session
+    case "$event" in
+        SessionEnd|SubagentStop) ;;
+        *) _ensure_session "$sid" "$json" ;;
+    esac
+
     case "$event" in
         SessionStart)     _hook_session_start "$sid" "$json" ;;
         UserPromptSubmit) _hook_prompt "$sid" "$json" ;;
@@ -70,9 +76,6 @@ cmd_hook() {
 
 _ensure_session() {
     local sid="$1" json="${2:-}"
-    local exists
-    exists=$(sql "SELECT 1 FROM sessions WHERE session_id='$sid';")
-    [[ -n "$exists" ]] && return 0
 
     local cwd project branch pane target
     cwd=$(printf '%s' "$json" | jq -r '.cwd // empty' 2>/dev/null) || true
@@ -86,12 +89,20 @@ _ensure_session() {
             -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
     fi
 
+    # Create if missing
     sql "INSERT OR IGNORE INTO sessions
          (session_id, status, cwd, project_name, git_branch, tmux_pane, tmux_target)
          VALUES ('$sid', 'working',
                  '$(sql_esc "$cwd")', '$(sql_esc "$project")',
                  '$(sql_esc "$branch")', '$(sql_esc "$pane")',
                  '$(sql_esc "$target")');"
+
+    # Backfill tmux info if missing (session existed but lacked pane data)
+    if [[ -n "$pane" ]]; then
+        sql "UPDATE sessions SET tmux_pane='$(sql_esc "$pane")',
+             tmux_target='$(sql_esc "$target")'
+             WHERE session_id='$sid' AND (tmux_pane IS NULL OR tmux_pane='');"
+    fi
 }
 
 _hook_session_start() {
@@ -120,8 +131,6 @@ _hook_session_start() {
 
 _hook_prompt() {
     local sid="$1" json="$2"
-    _ensure_session "$sid" "$json"
-
     local prompt
     prompt=$(printf '%s' "$json" | jq -r '(.prompt // .message // .content // "")' 2>/dev/null) || true
     prompt="${prompt:0:60}"
@@ -133,22 +142,18 @@ _hook_prompt() {
 
 _hook_post_tool() {
     local sid="$1" json="$2"
-    _ensure_session "$sid" "$json"
     sql "UPDATE sessions SET status='working', updated_at=unixepoch()
          WHERE session_id='$sid' AND status!='working';"
 }
 
 _hook_stop() {
     local sid="$1" json="$2"
-    _ensure_session "$sid" "$json"
     sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
          WHERE session_id='$sid';"
 }
 
 _hook_notification() {
     local sid="$1" json="${2:-}"
-    _ensure_session "$sid" "$json"
-
     sql "UPDATE sessions SET status='blocked', updated_at=unixepoch()
          WHERE session_id='$sid' AND status='working';"
     if [[ "${CLAUDE_TRACKER_SOUND:-0}" == "1" ]]; then
