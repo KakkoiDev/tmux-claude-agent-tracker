@@ -1,25 +1,55 @@
-# claude-agent-tracker
+# tmux-claude-agent-tracker
 
 Hook-based Claude Code session tracker for tmux. Event-driven, zero polling, no daemon.
 
 ## Install
 
+### TPM (recommended)
+
+Add to `~/.tmux.conf`:
+
+```bash
+set -g @plugin 'your-user/tmux-claude-agent-tracker'
+```
+
+Then `prefix + I` to install.
+
+### Manual
+
 ```bash
 ./install.sh
 ```
 
-Requires: `sqlite3`, `jq`, `tmux`. Symlinks to `~/.local/bin`.
+This will:
+- Symlink `bin/tmux-claude-agent-tracker` to `~/.local/bin`
+- Initialize the database
+- Add `run-shell` line to `~/.tmux.conf`
+
+Requires: `sqlite3`, `jq`, `tmux 3.0+`.
+
+## File Structure
+
+```
+tmux-claude-agent-tracker/
+├── claude-tracker.tmux          # TPM entry point
+├── scripts/
+│   ├── helpers.sh               # Config loading, tmux helpers
+│   └── tracker.sh               # Core logic: hook, menu, status-bar, goto
+├── install.sh                   # TPM + manual install
+└── bin/
+    └── tmux-claude-agent-tracker     # Thin wrapper -> scripts/tracker.sh
+```
 
 ## Usage
 
 | Command | Purpose |
 |---------|---------|
-| `claude-agent-tracker init` | Create DB and directory |
-| `claude-agent-tracker hook <event>` | Handle Claude Code hook (stdin JSON) |
-| `claude-agent-tracker status-bar` | Output tmux status string from cache |
-| `claude-agent-tracker menu` | Show tmux display-menu with session list |
-| `claude-agent-tracker goto <target>` | Navigate to tmux pane |
-| `claude-agent-tracker cleanup` | Remove stale sessions |
+| `tmux-claude-agent-tracker init` | Create DB and directory |
+| `tmux-claude-agent-tracker hook <event>` | Handle Claude Code hook (stdin JSON) |
+| `tmux-claude-agent-tracker status-bar` | Output tmux status string from cache |
+| `tmux-claude-agent-tracker menu [page]` | Show paginated tmux display-menu |
+| `tmux-claude-agent-tracker goto <target>` | Navigate to tmux pane |
+| `tmux-claude-agent-tracker cleanup` | Remove stale sessions |
 
 ## Status Bar Format
 
@@ -29,18 +59,49 @@ Requires: `sqlite3`, `jq`, `tmux`. Symlinks to `~/.local/bin`.
 - `*` = working
 - `!` = blocked (with duration suffix)
 
-Always renders all counts (including zero) so the status bar is stable and you can confirm tracking is active at a glance.
+## Menu
+
+`prefix + a` opens the agent menu. With pagination:
+
+```
+Claude Agents (1/3)
+─────────────────────
+! project-a/main
+* project-b/feature
+. project-c/dev
+─────────────────────
+Next      i
+Quit      q
+```
+
+- Select an agent to jump to its tmux pane
+- `i` / `o` navigate pages (when >10 agents)
+- `q` closes the menu
 
 ## Configuration
 
-Environment variables:
+Tmux options (set in `~/.tmux.conf`):
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `CLAUDE_TRACKER_COLOR_WORKING` | `black` | tmux color for working count |
-| `CLAUDE_TRACKER_COLOR_BLOCKED` | `black` | tmux color for blocked count |
-| `CLAUDE_TRACKER_COLOR_IDLE` | `black` | tmux color for idle count |
-| `CLAUDE_TRACKER_SOUND` | `0` | `1` to play sound on blocked transition |
+| Option | Default | Purpose |
+|--------|---------|---------|
+| `@claude-tracker-keybinding` | `a` | Menu trigger key |
+| `@claude-tracker-items-per-page` | `10` | Menu page size |
+| `@claude-tracker-key-next` | `i` | Next page key |
+| `@claude-tracker-key-prev` | `o` | Previous page key |
+| `@claude-tracker-key-quit` | `q` | Quit menu key |
+| `@claude-tracker-color-working` | `black` | tmux color for working count |
+| `@claude-tracker-color-blocked` | `black` | tmux color for blocked count |
+| `@claude-tracker-color-idle` | `black` | tmux color for idle count |
+| `@claude-tracker-sound` | `0` | `1` to play sound on blocked |
+
+Example:
+
+```bash
+set -g @claude-tracker-keybinding 'a'
+set -g @claude-tracker-items-per-page '15'
+set -g @claude-tracker-color-working 'green'
+set -g @claude-tracker-color-blocked 'red'
+```
 
 ## Architecture
 
@@ -70,7 +131,7 @@ Two fundamentally different read patterns:
 
 **Pull path (status-bar):** Tmux calls `status-bar` every `status-interval` seconds. Just `cat`s a flat file. Sub-millisecond. No DB access.
 
-The cache file (`~/.claude-agent-tracker/status_cache`) is the bridge. Hooks write it. Status-bar reads it. The hot path (tmux polling) never touches SQLite. The expensive path (hook processing) only runs when state actually changes.
+The cache file (`~/.tmux-claude-agent-tracker/status_cache`) is the bridge. Hooks write it. Status-bar reads it. The hot path (tmux polling) never touches SQLite. The expensive path (hook processing) only runs when state actually changes.
 
 The `mv -f` on the cache write makes it atomic -- tmux never reads a half-written file.
 
@@ -136,12 +197,12 @@ Stored once at session creation, reused for menu navigation.
 
 ### The goto Indirection
 
-Menu items call `run-shell 'claude-agent-tracker goto target'` instead of inline tmux commands. Display-menu command strings are parsed by tmux's command parser (not bash), making `\;` command chaining unreliable. The `goto` subcommand runs `switch-client`, `select-window`, `select-pane` as normal sequential bash calls.
+Menu items call `run-shell 'tmux-claude-agent-tracker goto target'` instead of inline tmux commands. Display-menu command strings are parsed by tmux's command parser (not bash), making `\;` command chaining unreliable. The `goto` subcommand runs `switch-client`, `select-window`, `select-pane` as normal sequential bash calls.
 
 ### Complete Data Flow
 
 ```
-settings.json                     ~/.claude-agent-tracker/
+settings.json                     ~/.tmux-claude-agent-tracker/
 (hook config)                     +-- tracker.db  (WAL mode)
      |                            +-- status_cache (flat file)
      | registers 10 hooks              |          |
