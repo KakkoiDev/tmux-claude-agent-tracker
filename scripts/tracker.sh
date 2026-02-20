@@ -7,9 +7,9 @@ SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPTS_DIR/helpers.sh"
 
 # Config loaded lazily — only when render or sound is needed
-TRACKER_DIR="$HOME/.tmux-claude-agent-tracker"
-DB="$TRACKER_DIR/tracker.db"
-CACHE="$TRACKER_DIR/status_cache"
+TRACKER_DIR="${TRACKER_DIR:-$HOME/.tmux-claude-agent-tracker}"
+DB="${DB:-$TRACKER_DIR/tracker.db}"
+CACHE="${CACHE:-$TRACKER_DIR/status_cache}"
 
 sql() { printf '.timeout 100\n%s\n' "$*" | sqlite3 "$DB"; }
 sql_sep() { local s="$1"; shift; printf '.timeout 100\n%s\n' "$*" | sqlite3 -separator "$s" "$DB"; }
@@ -105,6 +105,11 @@ cmd_hook() {
         SessionStart|UserPromptSubmit)
             _reap_dead 2>/dev/null || true ;;
     esac
+
+    # DEBUG trace — remove after diagnosing cache-stale bug
+    {
+        echo "$(date +%s) event=$event sid=$sid changed=$__changed render='$__render'"
+    } >> /tmp/claude-tracker-debug.log 2>/dev/null || true
 
     if [[ -n "$__render" ]]; then
         # Fast path: render data already fetched in same sqlite3 call
