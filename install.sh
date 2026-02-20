@@ -13,6 +13,7 @@ done
 # Symlink bin wrapper to PATH
 mkdir -p "$(dirname "$LINK")"
 ln -sf "$BIN" "$LINK"
+ln -sf "$SCRIPT_DIR/bin/claude-agent-tracker" "$HOME/.local/bin/claude-agent-tracker"
 
 # Init DB
 "$SCRIPT_DIR/scripts/tracker.sh" init

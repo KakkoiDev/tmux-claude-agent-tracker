@@ -93,6 +93,11 @@ _ensure_session() {
             -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
     fi
 
+    # Remove scan-discovered duplicate for this pane (hooks take over)
+    if [[ -n "$pane" ]]; then
+        sql "DELETE FROM sessions WHERE session_id LIKE 'scan-%' AND tmux_pane='$(sql_esc "$pane")';"
+    fi
+
     # Create if missing
     sql "INSERT OR IGNORE INTO sessions
          (session_id, status, cwd, project_name, git_branch, tmux_pane, tmux_target)
