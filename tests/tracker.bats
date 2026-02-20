@@ -380,6 +380,81 @@ teardown() {
     [[ "$(get_status s1)" == "idle" ]]
 }
 
+# ── _json_val ────────────────────────────────────────────────────────
+
+@test "_json_val extracts simple string value" {
+    local result
+    result=$(_json_val '{"session_id":"abc123","cwd":"/tmp"}' "session_id")
+    [[ "$result" == "abc123" ]]
+}
+
+@test "_json_val returns empty for missing key" {
+    local result
+    result=$(_json_val '{"session_id":"abc123"}' "cwd")
+    [[ -z "$result" ]]
+}
+
+@test "_json_val extracts correct key among many" {
+    local json='{"subagent_id":"sub1","subagent_type":"researcher","cwd":"/tmp/test"}'
+    [[ "$(_json_val "$json" "subagent_id")" == "sub1" ]]
+    [[ "$(_json_val "$json" "subagent_type")" == "researcher" ]]
+    [[ "$(_json_val "$json" "cwd")" == "/tmp/test" ]]
+}
+
+@test "_json_val returns empty on empty input" {
+    local result
+    result=$(_json_val '{}' "session_id")
+    [[ -z "$result" ]]
+}
+
+# ── stdin handling (read -r regression) ──────────────────────────────
+
+@test "cmd_hook works with JSON lacking trailing newline" {
+    insert_session "s1" "working" "%1"
+    # printf sends JSON without trailing newline — must not be silently dropped
+    printf '{"session_id":"s1"}' | cmd_hook "Stop"
+    [[ "$(get_status s1)" == "idle" ]]
+}
+
+@test "cmd_hook works with JSON having trailing newline" {
+    insert_session "s1" "working" "%1"
+    echo '{"session_id":"s1"}' | cmd_hook "Stop"
+    [[ "$(get_status s1)" == "idle" ]]
+}
+
+@test "cmd_hook exits cleanly on empty stdin" {
+    insert_session "s1" "working" "%1"
+    echo "" | cmd_hook "PostToolUse"
+    # Session unchanged — empty JSON has no session_id
+    [[ "$(get_status s1)" == "working" ]]
+}
+
+# ── No-op skip (SELECT changes) ─────────────────────────────────────
+
+@test "PostToolUse no-op does not update timestamp" {
+    insert_session "s1" "working" "%1"
+    sql "UPDATE sessions SET updated_at = unixepoch() - 100 WHERE session_id='s1';"
+    local before
+    before=$(sql "SELECT updated_at FROM sessions WHERE session_id='s1';")
+    _hook_post_tool "s1" '{}'
+    local after
+    after=$(sql "SELECT updated_at FROM sessions WHERE session_id='s1';")
+    [[ "$before" == "$after" ]]
+}
+
+@test "Notification no-op does not update timestamp" {
+    insert_session "s1" "blocked" "%1"
+    sql "UPDATE sessions SET updated_at = unixepoch() - 100 WHERE session_id='s1';"
+    local before
+    before=$(sql "SELECT updated_at FROM sessions WHERE session_id='s1';")
+    _hook_notification "s1" '{}'
+    local after
+    after=$(sql "SELECT updated_at FROM sessions WHERE session_id='s1';")
+    [[ "$before" == "$after" ]]
+}
+
+# ── Idle count stability (no flicker) ──────────────────────────────
+
 @test "atomic eviction keeps count stable during pane takeover" {
     insert_session "old" "idle" "%1" ""
     insert_session "other" "idle" "%2" ""
