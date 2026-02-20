@@ -5,6 +5,10 @@ TRACKER_DIR="$HOME/.claude-agent-tracker"
 DB="$TRACKER_DIR/tracker.db"
 CACHE="$TRACKER_DIR/status_cache"
 
+COLOR_WORKING="${CLAUDE_TRACKER_COLOR_WORKING:-black}"
+COLOR_BLOCKED="${CLAUDE_TRACKER_COLOR_BLOCKED:-black}"
+COLOR_IDLE="${CLAUDE_TRACKER_COLOR_IDLE:-black}"
+
 sql() { printf '.timeout 100\n%s\n' "$*" | sqlite3 "$DB"; }
 sql_sep() { local s="$1"; shift; printf '.timeout 100\n%s\n' "$*" | sqlite3 -separator "$s" "$DB"; }
 sql_esc() { printf '%s' "${1//\'/\'\'}"; }
@@ -203,7 +207,7 @@ _render_cache() {
     b=$(sql "SELECT COUNT(*) FROM sessions WHERE status='blocked';")
     i=$(sql "SELECT COUNT(*) FROM sessions WHERE status='idle';")
 
-    [[ "$w" -gt 0 ]] && result+="#[fg=green]${w}*#[default] "
+    [[ "$w" -gt 0 ]] && result+="#[fg=${COLOR_WORKING}]${w}*#[default] "
 
     if [[ "$b" -gt 0 ]]; then
         dur=$(sql "SELECT (unixepoch() - MIN(updated_at)) / 60
@@ -214,10 +218,10 @@ _render_cache() {
         elif [[ "$dur" -gt 0 ]]; then
             suffix="${dur}m"
         fi
-        result+="#[fg=red]${b}!${suffix}#[default] "
+        result+="#[fg=${COLOR_BLOCKED}]${b}!${suffix}#[default] "
     fi
 
-    [[ "$i" -gt 0 ]] && result+="#[fg=yellow]${i}.#[default] "
+    [[ "$i" -gt 0 ]] && result+="#[fg=${COLOR_IDLE}]${i}.#[default] "
 
     printf '%s' "${result% }" > "$CACHE.tmp"
     mv -f "$CACHE.tmp" "$CACHE"
