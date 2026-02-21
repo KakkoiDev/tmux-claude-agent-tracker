@@ -15,6 +15,7 @@ setup_test_env() {
     export COLOR_WORKING="black"
     export COLOR_BLOCKED="black"
     export COLOR_IDLE="black"
+    export COLOR_COMPLETED="black"
     export SOUND="0"
 
     # Initialize DB schema (suppress PRAGMA output)
@@ -25,7 +26,7 @@ PRAGMA busy_timeout=100;
 CREATE TABLE IF NOT EXISTS sessions (
     session_id    TEXT PRIMARY KEY,
     status        TEXT NOT NULL DEFAULT 'working'
-        CHECK(status IN ('working', 'blocked', 'idle')),
+        CHECK(status IN ('working', 'blocked', 'idle', 'completed')),
     cwd           TEXT NOT NULL,
     project_name  TEXT NOT NULL,
     git_branch    TEXT,

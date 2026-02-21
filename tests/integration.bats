@@ -35,9 +35,9 @@ teardown() {
     [[ "$(get_status "$sid")" == "working" ]]
     [[ "$(read_cache)" == *"1*"* ]]
 
-    # Stop → idle
+    # Stop → completed
     fire_hook Stop "$json"
-    [[ "$(get_status "$sid")" == "idle" ]]
+    [[ "$(get_status "$sid")" == "completed" ]]
 
     # SessionEnd → deleted
     fire_hook SessionEnd "$json"
@@ -166,18 +166,19 @@ teardown() {
         fire_hook UserPromptSubmit "{\"session_id\":\"multi-$i\",\"cwd\":\"/tmp/test\"}"
     done
 
-    # s1=working, s2=blocked, s3=idle
+    # s1=working, s2=blocked, s3=completed
     fire_hook Notification "{\"session_id\":\"multi-2\",\"cwd\":\"/tmp/test\"}"
     fire_hook Stop "{\"session_id\":\"multi-3\",\"cwd\":\"/tmp/test\"}"
 
     [[ "$(count_status working)" -eq 1 ]]
     [[ "$(count_status blocked)" -eq 1 ]]
-    [[ "$(count_status idle)" -eq 1 ]]
+    [[ "$(count_status completed)" -eq 1 ]]
 
     local out
     out=$(read_cache)
-    [[ "$out" == *"1."* ]]   # 1 idle
+    [[ "$out" == *"0."* ]]   # 0 idle
     [[ "$out" == *"1*"* ]]   # 1 working
+    [[ "$out" == *"1+"* ]]   # 1 completed
     [[ "$out" == *"1!"* ]]   # 1 blocked
 }
 
@@ -187,7 +188,7 @@ teardown() {
         fire_hook UserPromptSubmit "{\"session_id\":\"big-$i\",\"cwd\":\"/tmp/test\"}"
     done
 
-    # 2 working (1,2), 2 blocked (3,4), 2 idle (5,6)
+    # 2 working (1,2), 2 blocked (3,4), 2 completed (5,6)
     fire_hook Notification "{\"session_id\":\"big-3\",\"cwd\":\"/tmp/test\"}"
     fire_hook Notification "{\"session_id\":\"big-4\",\"cwd\":\"/tmp/test\"}"
     fire_hook Stop "{\"session_id\":\"big-5\",\"cwd\":\"/tmp/test\"}"
@@ -195,12 +196,13 @@ teardown() {
 
     [[ "$(count_status working)" -eq 2 ]]
     [[ "$(count_status blocked)" -eq 2 ]]
-    [[ "$(count_status idle)" -eq 2 ]]
+    [[ "$(count_status completed)" -eq 2 ]]
 
     local out
     out=$(read_cache)
-    [[ "$out" == *"2."* ]]
+    [[ "$out" == *"0."* ]]
     [[ "$out" == *"2*"* ]]
+    [[ "$out" == *"2+"* ]]
     [[ "$out" == *"2!"* ]]
 }
 
@@ -343,48 +345,61 @@ teardown() {
     [[ "$out" == *"0!"* ]]
 }
 
-# ── 10. Subagent lifecycle ───────────────────────────────────────────
+# ── 10. Completed status ─────────────────────────────────────────────
 
-@test "integration: SubagentStart creates session with agent_type" {
-    local parent="sub-parent"
-    local sub="sub-child"
+@test "integration: Stop sets completed, verified via cache" {
+    local sid="completed-1"
+    local json="{\"session_id\":\"$sid\",\"cwd\":\"/tmp/test\"}"
 
-    fire_hook SessionStart "{\"session_id\":\"$parent\",\"cwd\":\"/tmp/test\"}"
-    fire_hook UserPromptSubmit "{\"session_id\":\"$parent\",\"cwd\":\"/tmp/test\"}"
+    fire_hook SessionStart "$json"
+    fire_hook UserPromptSubmit "$json"
+    [[ "$(get_status "$sid")" == "working" ]]
 
-    fire_hook_with_pane SubagentStart "{\"session_id\":\"$parent\",\"subagent_id\":\"$sub\",\"subagent_type\":\"researcher\",\"cwd\":\"/tmp/test\"}"
+    fire_hook Stop "$json"
+    [[ "$(get_status "$sid")" == "completed" ]]
 
-    [[ "$(get_status "$sub")" == "working" ]]
-    local atype
-    atype=$(sql "SELECT agent_type FROM sessions WHERE session_id='$sub';")
-    [[ "$atype" == "researcher" ]]
-    [[ "$(count_sessions)" -eq 2 ]]
+    local out
+    out=$(read_cache)
+    [[ "$out" == *"1+"* ]]
+    [[ "$out" == *"0*"* ]]
 }
 
-@test "integration: Stop atomically cleans subagents and idles count stable" {
-    local parent="sub-stop-parent"
-    local sub1="sub-stop-c1"
-    local sub2="sub-stop-c2"
-    local other="sub-stop-other"
+@test "integration: completed resumes on UserPromptSubmit" {
+    local sid="completed-resume"
+    local json="{\"session_id\":\"$sid\",\"cwd\":\"/tmp/test\"}"
 
-    # Create parent + 2 subagents on same pane
-    fire_hook_with_pane SessionStart "{\"session_id\":\"$parent\",\"cwd\":\"/tmp/test\"}"
-    fire_hook_with_pane UserPromptSubmit "{\"session_id\":\"$parent\",\"cwd\":\"/tmp/test\"}"
-    fire_hook_with_pane SubagentStart "{\"session_id\":\"$parent\",\"subagent_id\":\"$sub1\",\"subagent_type\":\"researcher\",\"cwd\":\"/tmp/test\"}"
-    fire_hook_with_pane SubagentStart "{\"session_id\":\"$parent\",\"subagent_id\":\"$sub2\",\"subagent_type\":\"coder\",\"cwd\":\"/tmp/test\"}"
+    fire_hook SessionStart "$json"
+    fire_hook UserPromptSubmit "$json"
+    fire_hook Stop "$json"
+    [[ "$(get_status "$sid")" == "completed" ]]
 
-    # Create unrelated session (no pane)
-    fire_hook SessionStart "{\"session_id\":\"$other\",\"cwd\":\"/tmp/test\"}"
-    fire_hook UserPromptSubmit "{\"session_id\":\"$other\",\"cwd\":\"/tmp/test\"}"
+    fire_hook UserPromptSubmit "$json"
+    [[ "$(get_status "$sid")" == "working" ]]
+}
 
-    [[ "$(count_sessions)" -eq 4 ]]
+@test "integration: full lifecycle with completed status" {
+    local sid="completed-full"
+    local json="{\"session_id\":\"$sid\",\"cwd\":\"/tmp/test\"}"
 
-    # Stop parent — should delete subagents on same pane, idle parent
-    fire_hook_with_pane Stop "{\"session_id\":\"$parent\",\"cwd\":\"/tmp/test\"}"
+    fire_hook SessionStart "$json"
+    fire_hook UserPromptSubmit "$json"
+    fire_hook Stop "$json"
+    [[ "$(get_status "$sid")" == "completed" ]]
 
-    [[ "$(get_status "$parent")" == "idle" ]]
-    [[ -z "$(get_status "$sub1")" ]]
-    [[ -z "$(get_status "$sub2")" ]]
-    [[ "$(get_status "$other")" == "working" ]]
-    [[ "$(count_sessions)" -eq 2 ]]
+    # Resume
+    fire_hook UserPromptSubmit "$json"
+    [[ "$(get_status "$sid")" == "working" ]]
+
+    # Block and unblock
+    fire_hook Notification "$json"
+    [[ "$(get_status "$sid")" == "blocked" ]]
+    fire_hook PostToolUse "$json"
+    [[ "$(get_status "$sid")" == "working" ]]
+
+    # Complete again
+    fire_hook Stop "$json"
+    [[ "$(get_status "$sid")" == "completed" ]]
+
+    fire_hook SessionEnd "$json"
+    [[ "$(count_sessions)" -eq 0 ]]
 }

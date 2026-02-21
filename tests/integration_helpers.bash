@@ -16,6 +16,7 @@ setup_integration() {
     export COLOR_WORKING="black"
     export COLOR_BLOCKED="black"
     export COLOR_IDLE="black"
+    export COLOR_COMPLETED="black"
     export SOUND="0"
 
     # No pane by default — avoids eviction logic
@@ -98,7 +99,8 @@ fire_hook() {
     printf '%s' "$json" | env \
         TRACKER_DIR="$TRACKER_DIR" DB="$DB" CACHE="$CACHE" \
         COLOR_WORKING="$COLOR_WORKING" COLOR_BLOCKED="$COLOR_BLOCKED" \
-        COLOR_IDLE="$COLOR_IDLE" SOUND="$SOUND" \
+        COLOR_IDLE="$COLOR_IDLE" COLOR_COMPLETED="$COLOR_COMPLETED" \
+        SOUND="$SOUND" \
         TMUX_PANE="" \
         PATH="$TEST_TMPDIR/bin:$PATH" \
         bash "$TRACKER_SH" hook "$event"
@@ -110,7 +112,8 @@ fire_hook_with_pane() {
     printf '%s' "$json" | env \
         TRACKER_DIR="$TRACKER_DIR" DB="$DB" CACHE="$CACHE" \
         COLOR_WORKING="$COLOR_WORKING" COLOR_BLOCKED="$COLOR_BLOCKED" \
-        COLOR_IDLE="$COLOR_IDLE" SOUND="$SOUND" \
+        COLOR_IDLE="$COLOR_IDLE" COLOR_COMPLETED="$COLOR_COMPLETED" \
+        SOUND="$SOUND" \
         TMUX_PANE="$TEST_PANE" \
         PATH="$TEST_TMPDIR/bin:$PATH" \
         bash "$TRACKER_SH" hook "$event"

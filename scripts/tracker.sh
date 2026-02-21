@@ -27,6 +27,7 @@ _RENDER_SQL="SELECT
     COALESCE(SUM(CASE WHEN status='working' THEN 1 ELSE 0 END),0) || '|' ||
     COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END),0) || '|' ||
     COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0) || '|' ||
+    COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0) || '|' ||
     COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked'),0)
     FROM sessions"
 
@@ -47,10 +48,13 @@ cmd_init() {
 PRAGMA journal_mode=WAL;
 PRAGMA busy_timeout=100;
 
-CREATE TABLE IF NOT EXISTS sessions (
+-- DROP + CREATE: sessions are ephemeral, re-init is safe.
+-- Required when upgrading CHECK constraint (e.g. adding 'completed').
+DROP TABLE IF EXISTS sessions;
+CREATE TABLE sessions (
     session_id    TEXT PRIMARY KEY,
     status        TEXT NOT NULL DEFAULT 'working'
-        CHECK(status IN ('working', 'blocked', 'idle')),
+        CHECK(status IN ('working', 'blocked', 'idle', 'completed')),
     cwd           TEXT NOT NULL,
     project_name  TEXT NOT NULL,
     git_branch    TEXT,
@@ -186,8 +190,8 @@ _hook_post_tool() {
 
 _hook_stop() {
     local sid="$1"
-    sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
-         WHERE session_id='$sid';"
+    sql "UPDATE sessions SET status='completed', updated_at=unixepoch()
+         WHERE session_id='$sid' AND status IN ('working', 'blocked');"
 }
 
 # Hot path: UPDATE + render in one sqlite3 call
@@ -232,14 +236,15 @@ _load_config_fast() {
     fi
 }
 
-# Write formatted cache from pre-fetched "w|b|i|dur" data
+# Write formatted cache from pre-fetched "w|b|i|c|dur" data
 _write_cache() {
-    local w b i dur
-    IFS='|' read -r w b i dur <<< "$1"
-    w="${w:-0}"; b="${b:-0}"; i="${i:-0}"; dur="${dur:-0}"
+    local w b i c dur
+    IFS='|' read -r w b i c dur <<< "$1"
+    w="${w:-0}"; b="${b:-0}"; i="${i:-0}"; c="${c:-0}"; dur="${dur:-0}"
     local result=""
     result+="#[fg=${COLOR_IDLE}]${i}.#[default] "
     result+="#[fg=${COLOR_WORKING}]${w}*#[default] "
+    result+="#[fg=${COLOR_COMPLETED}]${c}+#[default] "
 
     if [[ "$b" -gt 0 ]]; then
         local suffix=""
@@ -273,10 +278,11 @@ _render_cache() {
         COALESCE(SUM(CASE WHEN status='working' THEN 1 ELSE 0 END),0),
         COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END),0),
         COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0),
+        COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0),
         COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions
                   WHERE status='blocked'),0)
         FROM sessions;") || return 0
-    [[ -z "$counts" ]] && counts="0|0|0|0"
+    [[ -z "$counts" ]] && counts="0|0|0|0|0"
 
     local project=""
     if [[ "${SHOW_PROJECT:-0}" == "1" ]]; then
@@ -326,7 +332,7 @@ cmd_menu() {
                COALESCE(git_branch,''), COALESCE(tmux_target,'')
         FROM sessions
         ORDER BY CASE status
-            WHEN 'blocked' THEN 0 WHEN 'working' THEN 1 ELSE 2
+            WHEN 'blocked' THEN 0 WHEN 'completed' THEN 1 WHEN 'working' THEN 2 ELSE 3
         END, updated_at DESC
         LIMIT $items_per_page OFFSET $offset;") || true
 
@@ -338,9 +344,10 @@ cmd_menu() {
         [[ -z "$_sid" ]] && continue
         local icon label
         case "$status" in
-            blocked) icon="!" ;;
-            working) icon="*" ;;
-            *)       icon="." ;;
+            blocked)   icon="!" ;;
+            completed) icon="+" ;;
+            working)   icon="*" ;;
+            *)         icon="." ;;
         esac
 
         label="${icon} ${project}"
@@ -405,7 +412,7 @@ _reap_dead() {
             sql "DELETE FROM sessions WHERE session_id='$sid';"
             changed=1
         # Live pane, no claude process, working/blocked → delete (Ctrl+C case)
-        elif [[ "$st" != "idle" ]] \
+        elif [[ "$st" != "idle" && "$st" != "completed" ]] \
           && ! printf '%s' "$claude_panes" | grep -qx "$pane"; then
             sql "DELETE FROM sessions WHERE session_id='$sid';"
             changed=1
@@ -508,6 +515,10 @@ cmd_goto() {
     tmux switch-client -t "$sess" 2>/dev/null || true
     tmux select-window -t "$win" 2>/dev/null || true
     tmux select-pane -t "$target" 2>/dev/null || true
+    sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
+         WHERE tmux_target='$(sql_esc "$target")' AND status='completed';" 2>/dev/null || true
+    _render_cache 2>/dev/null || true
+    tmux refresh-client -S 2>/dev/null || true
 }
 
 # ── main ──────────────────────────────────────────────────────────────

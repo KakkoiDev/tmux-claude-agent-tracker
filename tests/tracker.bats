@@ -19,10 +19,33 @@ teardown() {
     [[ "$(get_status s1)" == "working" ]]
 }
 
-@test "Stop sets status to idle" {
+@test "Stop sets working to completed" {
     insert_session "s1" "working" "%1"
     _hook_stop "s1"
+    [[ "$(get_status s1)" == "completed" ]]
+}
+
+@test "Stop sets blocked to completed" {
+    insert_session "s1" "blocked" "%1"
+    _hook_stop "s1"
+    [[ "$(get_status s1)" == "completed" ]]
+}
+
+@test "Stop on idle is no-op" {
+    insert_session "s1" "idle" "%1"
+    _hook_stop "s1"
     [[ "$(get_status s1)" == "idle" ]]
+}
+
+@test "Stop on completed is no-op" {
+    insert_session "s1" "completed" "%1"
+    local before
+    before=$(sql "SELECT updated_at FROM sessions WHERE session_id='s1';")
+    _hook_stop "s1"
+    [[ "$(get_status s1)" == "completed" ]]
+    local after
+    after=$(sql "SELECT updated_at FROM sessions WHERE session_id='s1';")
+    [[ "$before" == "$after" ]]
 }
 
 @test "Notification sets working to blocked" {
@@ -67,11 +90,11 @@ teardown() {
 @test "Notification after Stop does not re-block session" {
     insert_session "s1" "working" "%1"
     _hook_stop "s1"
-    [[ "$(get_status s1)" == "idle" ]]
+    [[ "$(get_status s1)" == "completed" ]]
     _hook_notification "s1" '{}'
-    [[ "$(get_status s1)" == "idle" ]]
+    [[ "$(get_status s1)" == "completed" ]]
     _render_cache
-    [[ "$(cat "$CACHE")" == *"1."* ]]
+    [[ "$(cat "$CACHE")" == *"1+"* ]]
     [[ "$(cat "$CACHE")" == *"0!"* ]]
 }
 
@@ -282,7 +305,7 @@ teardown() {
     _render_cache
     local out
     out=$(cat "$CACHE")
-    [[ "$out" == "#[fg=black]1.#[default] #[fg=black]1*#[default] #[fg=black]0!#[default]" ]]
+    [[ "$out" == "#[fg=black]1.#[default] #[fg=black]1*#[default] #[fg=black]0+#[default] #[fg=black]0!#[default]" ]]
 }
 
 @test "_render_cache produces correct format with blocked" {
@@ -424,7 +447,7 @@ teardown() {
     _render_cache
     local after
     after=$(cat "$CACHE")
-    [[ "$after" == *"1."* ]]
+    [[ "$after" == *"1+"* ]]
     [[ "$after" == *"0!"* ]]
 }
 
@@ -457,10 +480,10 @@ teardown() {
     [[ "$(cat "$CACHE")" == *"1*"* ]]
     [[ "$(cat "$CACHE")" == *"0!"* ]]
 
-    # Stop -> idle
+    # Stop -> completed
     _hook_stop "s1"
     _render_cache
-    [[ "$(cat "$CACHE")" == *"1."* ]]
+    [[ "$(cat "$CACHE")" == *"1+"* ]]
     [[ "$(cat "$CACHE")" == *"0!"* ]]
 
     # SessionEnd -> deleted
@@ -573,13 +596,13 @@ teardown() {
     insert_session "s1" "working" "%1"
     # printf sends JSON without trailing newline — must not be silently dropped
     printf '{"session_id":"s1"}' | cmd_hook "Stop"
-    [[ "$(get_status s1)" == "idle" ]]
+    [[ "$(get_status s1)" == "completed" ]]
 }
 
 @test "cmd_hook works with JSON having trailing newline" {
     insert_session "s1" "working" "%1"
     echo '{"session_id":"s1"}' | cmd_hook "Stop"
-    [[ "$(get_status s1)" == "idle" ]]
+    [[ "$(get_status s1)" == "completed" ]]
 }
 
 @test "cmd_hook exits cleanly on empty stdin" {
@@ -713,7 +736,7 @@ _integration_mock() {
     [[ "$(get_status s1)" == "working" ]]
 
     echo '{"session_id":"s1"}' | cmd_hook "Stop"
-    [[ "$(get_status s1)" == "idle" ]]
+    [[ "$(get_status s1)" == "completed" ]]
 
     echo '{"session_id":"s1"}' | cmd_hook "SessionEnd"
     [[ "$(count_sessions)" -eq 0 ]]
@@ -750,10 +773,10 @@ _integration_mock() {
     [[ "$(get_status s1)" == "working" ]]
 }
 
-@test "integration: blocked then Stop sets idle" {
+@test "integration: blocked then Stop sets completed" {
     insert_session "s1" "blocked" "%1"
     echo '{"session_id":"s1"}' | cmd_hook "Stop"
-    [[ "$(get_status s1)" == "idle" ]]
+    [[ "$(get_status s1)" == "completed" ]]
 }
 
 @test "integration: idle then PostToolUse sets working" {
@@ -792,4 +815,104 @@ _integration_mock() {
     echo '{"session_id":"new","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
     [[ -z "$(get_status old)" ]]
     [[ "$(get_status new)" == "idle" ]]
+}
+
+# ── Completed status tests ──────────────────────────────────────────
+
+@test "goto clears completed to idle" {
+    insert_session "s1" "completed" "%1"
+    sql "UPDATE sessions SET tmux_target='test:0.0' WHERE session_id='s1';"
+    cmd_goto "test:0.0"
+    [[ "$(get_status s1)" == "idle" ]]
+}
+
+@test "goto does not change non-completed sessions" {
+    insert_session "s1" "working" "%1"
+    sql "UPDATE sessions SET tmux_target='test:0.0' WHERE session_id='s1';"
+    cmd_goto "test:0.0"
+    [[ "$(get_status s1)" == "working" ]]
+}
+
+@test "completed → UserPromptSubmit → working" {
+    insert_session "s1" "completed" "%1"
+    _hook_prompt "s1"
+    [[ "$(get_status s1)" == "working" ]]
+}
+
+@test "completed → PostToolUse → working" {
+    insert_session "s1" "completed" "%1"
+    _hook_post_tool "s1"
+    [[ "$(get_status s1)" == "working" ]]
+}
+
+@test "_render_cache counts completed correctly" {
+    insert_session "w1" "working" "%1"
+    insert_session "c1" "completed" "%2"
+    insert_session "c2" "completed" "%3"
+    insert_session "i1" "idle" "%4"
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    [[ "$out" == *"1."* ]]    # 1 idle
+    [[ "$out" == *"1*"* ]]    # 1 working
+    [[ "$out" == *"2+"* ]]    # 2 completed
+    [[ "$out" == *"0!"* ]]    # 0 blocked
+}
+
+@test "_reap_dead preserves completed sessions" {
+    insert_session "s1" "completed" "%10"
+
+    tmux() {
+        case "$1" in
+            list-panes) echo "%10 1234" ;;
+            *) true ;;
+        esac
+    }
+    pgrep() { return 1; }
+
+    _reap_dead
+    [[ "$(get_status s1)" == "completed" ]]
+}
+
+@test "Notification does not set completed to blocked" {
+    insert_session "s1" "completed" "%1"
+    _hook_notification "s1" '{}'
+    [[ "$(get_status s1)" == "completed" ]]
+}
+
+@test "integration: Stop sets completed then goto clears to idle" {
+    _integration_mock "%1"
+    echo '{"session_id":"s1","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
+    echo '{"session_id":"s1"}' | cmd_hook "UserPromptSubmit"
+    [[ "$(get_status s1)" == "working" ]]
+
+    echo '{"session_id":"s1"}' | cmd_hook "Stop"
+    [[ "$(get_status s1)" == "completed" ]]
+
+    # Simulate goto — need tmux_target set
+    sql "UPDATE sessions SET tmux_target='test:0.0' WHERE session_id='s1';"
+    cmd_goto "test:0.0"
+    [[ "$(get_status s1)" == "idle" ]]
+}
+
+@test "integration: full lifecycle with completed" {
+    _integration_mock "%1"
+    echo '{"session_id":"s1","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
+    [[ "$(get_status s1)" == "idle" ]]
+
+    echo '{"session_id":"s1"}' | cmd_hook "UserPromptSubmit"
+    [[ "$(get_status s1)" == "working" ]]
+
+    echo '{"session_id":"s1"}' | cmd_hook "Stop"
+    [[ "$(get_status s1)" == "completed" ]]
+
+    # New prompt resumes from completed
+    echo '{"session_id":"s1"}' | cmd_hook "UserPromptSubmit"
+    [[ "$(get_status s1)" == "working" ]]
+
+    echo '{"session_id":"s1"}' | cmd_hook "Stop"
+    [[ "$(get_status s1)" == "completed" ]]
+
+    echo '{"session_id":"s1"}' | cmd_hook "SessionEnd"
+    [[ "$(count_sessions)" -eq 0 ]]
 }

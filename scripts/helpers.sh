@@ -36,6 +36,7 @@ KEY_QUIT=""
 COLOR_WORKING=""
 COLOR_BLOCKED=""
 COLOR_IDLE=""
+COLOR_COMPLETED=""
 SOUND=""
 SHOW_PROJECT=""
 
@@ -61,6 +62,7 @@ load_config() {
     COLOR_WORKING=$(get_tmux_option "@claude-tracker-color-working" "black")
     COLOR_BLOCKED=$(get_tmux_option "@claude-tracker-color-blocked" "black")
     COLOR_IDLE=$(get_tmux_option "@claude-tracker-color-idle" "black")
+    COLOR_COMPLETED=$(get_tmux_option "@claude-tracker-color-completed" "black")
     SOUND=$(get_tmux_option "@claude-tracker-sound" "0")
     SHOW_PROJECT=$(get_tmux_option "@claude-tracker-show-project" "0")
 
@@ -74,6 +76,7 @@ KEY_QUIT='$KEY_QUIT'
 COLOR_WORKING='$COLOR_WORKING'
 COLOR_BLOCKED='$COLOR_BLOCKED'
 COLOR_IDLE='$COLOR_IDLE'
+COLOR_COMPLETED='$COLOR_COMPLETED'
 SOUND='$SOUND'
 SHOW_PROJECT='$SHOW_PROJECT'
 EOF

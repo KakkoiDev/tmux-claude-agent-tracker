@@ -5,13 +5,14 @@ Track [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agent sessio
 ## Status Bar
 
 ```
-0. 2* 1!3m
+0. 2* 1+ 1!3m
 ```
 
 | Symbol | Meaning |
 |--------|---------|
 | `0.` | 0 idle |
 | `2*` | 2 working |
+| `1+` | 1 completed (output ready) |
 | `1!3m` | 1 blocked for 3m (longest wait) |
 
 ## Menu
@@ -22,8 +23,9 @@ Track [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agent sessio
 Claude Agents
 ─────────────
 ! project-a/main
-* project-b/feature
-. project-c/dev
++ project-b/feature
+* project-c/dev
+. project-d/fix
 ─────────────
 Quit      q
 ```
@@ -85,7 +87,7 @@ cd ~/.tmux/plugins/tmux-claude-agent-tracker
 | `PostToolUse` | Tool call succeeds | Set working (no-op if already) |
 | `PostToolUseFailure` | Tool call fails or user rejects | Set working (clears stuck blocked state) |
 | `Notification` | Permission prompt or elicitation dialog shown | Set blocked |
-| `Stop` | Claude finishes responding | Set idle |
+| `Stop` | Claude finishes responding | Set completed |
 | `SessionEnd` | Session terminates | Delete session row |
 
 **Why `PostToolUseFailure`?** Claude Code's `Stop` hook does not fire on user interrupt. If a user rejects a permission prompt and interrupts, the session stays stuck at `blocked` with no hook to clear it. `PostToolUseFailure` fires on tool rejection/failure and transitions `blocked` back to `working`, where `_reap_dead` can clean up.
@@ -112,6 +114,7 @@ Set in `~/.tmux.conf`:
 | `@claude-tracker-color-working` | `black` | Working count color |
 | `@claude-tracker-color-blocked` | `black` | Blocked count color |
 | `@claude-tracker-color-idle` | `black` | Idle count color |
+| `@claude-tracker-color-completed` | `black` | Completed count color |
 | `@claude-tracker-sound` | `0` | `1` to play sound on block |
 | `@claude-tracker-status-interval` | `5` | Blocked timer refresh (seconds) |
 | `@claude-tracker-show-project` | `0` | `1` to show project name |
