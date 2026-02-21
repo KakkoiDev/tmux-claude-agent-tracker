@@ -15,6 +15,8 @@ Track [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agent sessio
 | `1+` | 1 completed (output ready) |
 | `1!3m` | 1 blocked for 3m (longest wait) |
 
+Completed (`+`) auto-clears to idle when you focus the pane. If you're already watching the pane when Claude finishes, it goes straight to idle.
+
 ## Menu
 
 `prefix + a` opens the agent list. Select to jump to pane.

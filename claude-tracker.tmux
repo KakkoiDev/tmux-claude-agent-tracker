@@ -16,6 +16,9 @@ load_config
 # Bind menu key
 tmux bind-key "$KEYBINDING" run-shell "$SCRIPTS_DIR/tracker.sh menu"
 
+# Clear completed status when user focuses a pane
+tmux set-hook -g pane-focus-in "run-shell -b '$SCRIPTS_DIR/tracker.sh pane-focus #{pane_id}'"
+
 # Set status-interval for periodic blocked timer refresh.
 # Only lower it — never override a user's custom short interval.
 tracker_interval=$(get_tmux_option "@claude-tracker-status-interval" "5")

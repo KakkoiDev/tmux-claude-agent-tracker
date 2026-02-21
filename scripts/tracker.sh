@@ -190,8 +190,18 @@ _hook_post_tool() {
 
 _hook_stop() {
     local sid="$1"
-    sql "UPDATE sessions SET status='completed', updated_at=unixepoch()
-         WHERE session_id='$sid' AND status IN ('working', 'blocked');"
+    local pane="${TMUX_PANE:-}"
+    local is_active=""
+    if [[ -n "$pane" ]]; then
+        is_active=$(tmux display-message -t "$pane" -p '#{pane_active}' 2>/dev/null || true)
+    fi
+    if [[ "$is_active" == "1" ]]; then
+        sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
+             WHERE session_id='$sid' AND status IN ('working', 'blocked');"
+    else
+        sql "UPDATE sessions SET status='completed', updated_at=unixepoch()
+             WHERE session_id='$sid' AND status IN ('working', 'blocked');"
+    fi
 }
 
 # Hot path: UPDATE + render in one sqlite3 call
@@ -521,6 +531,21 @@ cmd_goto() {
     tmux refresh-client -S 2>/dev/null || true
 }
 
+# ── pane-focus ────────────────────────────────────────────────────────
+
+cmd_pane_focus() {
+    [[ -f "$DB" ]] || return 0
+    local pane_id="$1"
+    local changed
+    changed=$(sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
+         WHERE tmux_pane='$(sql_esc "$pane_id")' AND status='completed';
+         SELECT changes();")
+    if [[ "${changed:-0}" -gt 0 ]]; then
+        _render_cache 2>/dev/null || true
+        tmux refresh-client -S 2>/dev/null || true
+    fi
+}
+
 # ── main ──────────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -530,8 +555,9 @@ case "${1:-}" in
     refresh)    cmd_refresh ;;
     menu)       tmux display-message "Opening..." 2>/dev/null || true; _reap_dead 2>/dev/null || true; cmd_scan 2>/dev/null || true; cmd_menu "${2:-1}" ;;
     goto)       cmd_goto "${2:?Usage: tracker.sh goto <target>}" ;;
+    pane-focus) cmd_pane_focus "${2:?Usage: tracker.sh pane-focus <pane_id>}" ;;
     scan)       cmd_scan ;;
     cleanup)    cmd_cleanup ;;
-    *)          echo "Usage: tracker.sh {init|hook|status-bar|refresh|menu|scan|cleanup|goto}" >&2
+    *)          echo "Usage: tracker.sh {init|hook|status-bar|refresh|menu|scan|cleanup|goto|pane-focus}" >&2
                 exit 1 ;;
 esac

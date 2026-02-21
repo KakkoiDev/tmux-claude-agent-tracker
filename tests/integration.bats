@@ -377,6 +377,34 @@ teardown() {
     [[ "$(get_status "$sid")" == "working" ]]
 }
 
+@test "integration: pane-focus clears completed to idle" {
+    local sid="pf-clear"
+    local json="{\"session_id\":\"$sid\",\"cwd\":\"/tmp/test\"}"
+
+    fire_hook_with_pane SessionStart "$json"
+    fire_hook_with_pane UserPromptSubmit "$json"
+    fire_hook Stop "$json"
+    [[ "$(get_status "$sid")" == "completed" ]]
+
+    # Get the pane assigned by fire_hook_with_pane
+    local pane
+    pane=$(sql "SELECT tmux_pane FROM sessions WHERE session_id='$sid';")
+
+    # Fire pane-focus command
+    env TRACKER_DIR="$TRACKER_DIR" DB="$DB" CACHE="$CACHE" \
+        COLOR_WORKING="$COLOR_WORKING" COLOR_BLOCKED="$COLOR_BLOCKED" \
+        COLOR_IDLE="$COLOR_IDLE" COLOR_COMPLETED="$COLOR_COMPLETED" \
+        PATH="$TEST_TMPDIR/bin:$PATH" \
+        bash "$TRACKER_SH" pane-focus "$pane"
+
+    [[ "$(get_status "$sid")" == "idle" ]]
+
+    local out
+    out=$(read_cache)
+    [[ "$out" == *"1."* ]]
+    [[ "$out" == *"0+"* ]]
+}
+
 @test "integration: full lifecycle with completed status" {
     local sid="completed-full"
     local json="{\"session_id\":\"$sid\",\"cwd\":\"/tmp/test\"}"

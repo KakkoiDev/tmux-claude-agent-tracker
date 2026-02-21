@@ -43,13 +43,15 @@ stateDiagram-v2
     [*] --> idle : SessionStart
 
     idle --> working : UserPromptSubmit / PostToolUse
-    working --> completed : Stop
+    working --> completed : Stop (inactive pane)
+    working --> idle : Stop (active pane)
     working --> blocked : Notification (permission/elicitation)
 
     blocked --> working : UserPromptSubmit / PostToolUse / PostToolUseFailure
-    blocked --> completed : Stop
+    blocked --> completed : Stop (inactive pane)
+    blocked --> idle : Stop (active pane)
 
-    completed --> idle : goto (user focuses pane)
+    completed --> idle : goto / pane-focus-in
     completed --> working : UserPromptSubmit / PostToolUse
 
     idle --> [*] : SessionEnd
@@ -60,11 +62,12 @@ stateDiagram-v2
 
 Transition guards:
 - `SessionStart` -> idle (INSERT OR IGNORE, no-op if session exists)
-- `Stop` -> completed (`WHERE status IN ('working', 'blocked')`, no-op on idle/completed)
+- `Stop` -> completed or idle (`WHERE status IN ('working', 'blocked')`, no-op on idle/completed; sets idle if pane is active, completed otherwise)
 - `UserPromptSubmit` -> working (unconditional, handles idle/completed/blocked->working)
 - `PostToolUse` / `PostToolUseFailure` -> working (`WHERE status!='working'`, no-op when already working)
 - `Notification` -> blocked (`WHERE status = 'working'`, only from working state; `permission_prompt` or `elicitation_dialog` only)
-- `goto` -> idle (`WHERE status='completed'`, clears completed when user focuses pane)
+- `goto` -> idle (`WHERE status='completed'`, clears completed when user focuses pane via menu)
+- `pane-focus-in` -> idle (`WHERE status='completed'`, clears completed when user navigates to pane)
 
 ## Hook Performance
 
@@ -161,7 +164,8 @@ Multiple concurrent hook processes. WAL mode handles this:
 | UserPromptSubmit | any -> working | unconditional |
 | PostToolUse | blocked/idle/completed -> working | `status!='working'` |
 | PostToolUseFailure | blocked/idle/completed -> working | `status!='working'` (catches rejected tools / interrupts) |
-| Stop | working/blocked -> completed | `status IN ('working', 'blocked')` (does NOT fire on user interrupt) |
+| Stop | working/blocked -> completed (or idle if active pane) | `status IN ('working', 'blocked')` (does NOT fire on user interrupt; checks `#{pane_active}`) |
+| pane-focus-in | completed -> idle | `status='completed'` AND `tmux_pane` matches focused pane |
 | Notification | working -> blocked | `status='working'`, `permission_prompt` or `elicitation_dialog` only |
 | SessionEnd | any -> (deleted) | unconditional |
 | TeammateIdle | any -> idle | unconditional |

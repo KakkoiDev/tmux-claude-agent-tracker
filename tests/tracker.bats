@@ -48,6 +48,41 @@ teardown() {
     [[ "$before" == "$after" ]]
 }
 
+@test "Stop on active pane sets idle instead of completed" {
+    insert_session "s1" "working" "%1"
+    export TMUX_PANE="%1"
+    tmux() {
+        if [[ "${1:-}" == "display-message" && "$*" == *"pane_active"* ]]; then
+            echo "1"
+            return 0
+        fi
+        return 0
+    }
+    _hook_stop "s1"
+    [[ "$(get_status s1)" == "idle" ]]
+}
+
+@test "Stop on inactive pane sets completed" {
+    insert_session "s1" "working" "%1"
+    export TMUX_PANE="%1"
+    tmux() {
+        if [[ "${1:-}" == "display-message" && "$*" == *"pane_active"* ]]; then
+            echo "0"
+            return 0
+        fi
+        return 0
+    }
+    _hook_stop "s1"
+    [[ "$(get_status s1)" == "completed" ]]
+}
+
+@test "Stop without TMUX_PANE sets completed" {
+    insert_session "s1" "working" "%1"
+    export TMUX_PANE=""
+    _hook_stop "s1"
+    [[ "$(get_status s1)" == "completed" ]]
+}
+
 @test "Notification sets working to blocked" {
     insert_session "s1" "working" "%1"
     _hook_notification "s1" '{}'
@@ -878,6 +913,32 @@ _integration_mock() {
     insert_session "s1" "completed" "%1"
     _hook_notification "s1" '{}'
     [[ "$(get_status s1)" == "completed" ]]
+}
+
+# ── Pane focus ───────────────────────────────────────────────────────
+
+@test "cmd_pane_focus clears completed to idle" {
+    insert_session "s1" "completed" "%1"
+    cmd_pane_focus "%1"
+    [[ "$(get_status s1)" == "idle" ]]
+}
+
+@test "cmd_pane_focus is no-op for non-completed sessions" {
+    insert_session "s1" "working" "%1"
+    insert_session "s2" "idle" "%2"
+    insert_session "s3" "blocked" "%3"
+    cmd_pane_focus "%1"
+    cmd_pane_focus "%2"
+    cmd_pane_focus "%3"
+    [[ "$(get_status s1)" == "working" ]]
+    [[ "$(get_status s2)" == "idle" ]]
+    [[ "$(get_status s3)" == "blocked" ]]
+}
+
+@test "cmd_pane_focus is no-op when no DB" {
+    rm -f "$DB"
+    run cmd_pane_focus "%1"
+    [[ "$status" -eq 0 ]]
 }
 
 @test "integration: Stop sets completed then goto clears to idle" {
