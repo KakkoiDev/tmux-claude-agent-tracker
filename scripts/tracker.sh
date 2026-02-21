@@ -192,9 +192,6 @@ _hook_stop() {
     local sid="$1"
     sql "UPDATE sessions SET status='completed', updated_at=unixepoch()
          WHERE session_id='$sid' AND status IN ('working', 'blocked');"
-    # Auto-clear if user is viewing this pane. tmux resolves #{pane_id} at
-    # call time (not subprocess context), so this works reliably.
-    tmux run-shell -b "$SCRIPTS_DIR/tracker.sh pane-focus #{pane_id}" 2>/dev/null || true
 }
 
 # Hot path: UPDATE + render in one sqlite3 call
@@ -307,6 +304,14 @@ cmd_status_bar() {
 cmd_refresh() {
     [[ -f "$DB" ]] || return 0
     _render_cache 2>/dev/null || true
+    # Auto-clear completed on focused pane. Deferred here (not in Stop) so the
+    # completed indicator is visible for one refresh cycle before clearing.
+    # tmux resolves #{pane_id} at run-shell call time, not subprocess context.
+    local has_completed
+    has_completed=$(sql "SELECT 1 FROM sessions WHERE status='completed' LIMIT 1;")
+    if [[ -n "$has_completed" ]]; then
+        tmux run-shell -b "$SCRIPTS_DIR/tracker.sh pane-focus #{pane_id}" 2>/dev/null || true
+    fi
     # No stdout — #() renders empty string; display comes from #{@claude-tracker-status}
 }
 
