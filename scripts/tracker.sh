@@ -17,9 +17,9 @@ sql_esc() { local q="'"; printf '%s' "${1//$q/$q$q}"; }
 
 # Fast JSON value extraction — replaces jq for simple key lookups
 _json_val() {
-    if [[ $1 =~ \"$2\":\"([^\"]*) ]]; then
-        printf '%s' "${BASH_REMATCH[1]}"
-    fi
+    local _t="${1#*\"$2\":\"}"
+    [[ "$_t" == "$1" ]] && return
+    printf '%s' "${_t%%\"*}"
 }
 
 # Render SQL fragment — used by combined hook+render and standalone _render_cache

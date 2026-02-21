@@ -461,6 +461,17 @@ teardown() {
     [[ -z "$result" ]]
 }
 
+@test "_json_val handles keys with dots" {
+    local json='{"a.b":"dot","ab":"nodot"}'
+    [[ "$(_json_val "$json" "a.b")" == "dot" ]]
+}
+
+@test "_json_val does not match partial key via dot wildcard" {
+    # With regex impl, "a.b" would match "axb" as dot is any-char
+    local json='{"axb":"wrong","a.b":"right"}'
+    [[ "$(_json_val "$json" "a.b")" == "right" ]]
+}
+
 # ── stdin handling (read -r regression) ──────────────────────────────
 
 @test "cmd_hook works with JSON lacking trailing newline" {
