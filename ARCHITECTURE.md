@@ -10,11 +10,16 @@ sequenceDiagram
 
     C->>H: hook JSON on stdin
     H->>H: sqlite3 write → DB
-    H->>H: render cache → file
+    H->>H: render → file cache + tmux option
+    H->>T: tmux set @claude-tracker-status
     H->>T: tmux refresh-client -S
+    Note over T: #{@option} re-evaluated instantly
 
-    T->>H: #(status-bar)
-    H-->>T: cat cache file
+    T->>H: #(tracker.sh refresh) every N sec
+    H->>H: re-render blocked timer from DB
+    H->>T: tmux set @claude-tracker-status
+    Note over T: no stdout — display via #{@option}
+
     T->>H: prefix+a
     H-->>T: display-menu
 ```
@@ -23,11 +28,13 @@ No daemon. Each hook is a fire-and-forget bash process. SQLite is the only share
 
 ## Push/Pull Split
 
-**Push (hooks):** Claude event -> write DB -> render cache -> refresh tmux. Synchronous.
+**Push (hooks):** Claude event -> write DB -> render to file cache + tmux option -> `refresh-client -S`. The status is pushed to `@claude-tracker-status` via `tmux set`, and `#{@option}` in status-right is re-evaluated immediately on refresh. This eliminates the lag caused by `#()` caching.
 
-**Pull (status-bar):** Tmux calls `status-bar` every N seconds. Reads cache file. Sub-millisecond. Blocked timer is recomputed live from DB; all other data served from cache.
+**Pull (refresh):** Tmux calls `#(tracker.sh refresh)` every `status-interval` seconds. Re-queries DB (blocked timer recomputation), updates the tmux option. Produces no stdout — display comes from `#{@claude-tracker-status}`.
 
-Cache write uses `mv -f` for atomicity.
+**Why not `#()`?** Tmux caches `#()` command output for `status-interval` seconds. `refresh-client -S` redraws the status line but does NOT re-evaluate `#()` — it uses the cached output. This caused up to `status-interval` seconds of lag between hook execution and visible status change. Switching to `#{@option}` (a tmux user option) eliminates this because option values are read fresh on every redraw.
+
+Cache file write uses `mv -f` for atomicity. The tmux option is the primary display source; the file cache is a fallback.
 
 ## State Machine
 
@@ -84,7 +91,12 @@ Hook path uses `_load_config_fast` which sources the cache file directly without
 | ~9ms | sqlite3 (combined UPDATE + render) |
 | ~5ms | source config cache |
 | ~6ms | write cache file (printf + mv) |
+| ~3ms | tmux set @claude-tracker-status |
 | ~7ms | tmux refresh-client -S |
+
+### Status-interval enforcement
+
+The plugin sets `status-interval` to `@claude-tracker-status-interval` (default 5s) on load, but only lowers it — never overrides a user's shorter custom interval. This ensures the blocked timer refreshes periodically while respecting user preferences.
 
 ### Asymmetric transition latency
 

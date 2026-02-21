@@ -310,8 +310,12 @@ _write_cache() {
         result+=" @${2}"
     fi
 
-    printf '%s' "${result% }" > "$CACHE.tmp"
+    local final="${result% }"
+    printf '%s' "$final" > "$CACHE.tmp"
     mv -f "$CACHE.tmp" "$CACHE"
+    # Push to tmux option for instant display via #{@claude-tracker-status}
+    # (#{@option} is re-evaluated on refresh-client -S, unlike #() which is cached)
+    tmux set -gq @claude-tracker-status "$final" 2>/dev/null || true
 }
 
 _render_cache() {
@@ -341,6 +345,14 @@ _render_cache() {
 
 cmd_status_bar() {
     [[ -f "$CACHE" ]] && cat "$CACHE"
+}
+
+# ── refresh (periodic, called by #() for blocked timer) ──────────────
+
+cmd_refresh() {
+    [[ -f "$DB" ]] || return 0
+    _render_cache 2>/dev/null || true
+    # No stdout — #() renders empty string; display comes from #{@claude-tracker-status}
 }
 
 # ── menu ──────────────────────────────────────────────────────────────
@@ -558,10 +570,11 @@ case "${1:-}" in
     init)       cmd_init ;;
     hook)       cmd_hook "${2:?Usage: tracker.sh hook <event>}" ;;
     status-bar) cmd_status_bar ;;
+    refresh)    cmd_refresh ;;
     menu)       _reap_dead 2>/dev/null || true; cmd_scan 2>/dev/null || true; cmd_menu "${2:-1}" ;;
     goto)       cmd_goto "${2:?Usage: tracker.sh goto <target>}" ;;
     scan)       cmd_scan ;;
     cleanup)    cmd_cleanup ;;
-    *)          echo "Usage: tracker.sh {init|hook|status-bar|menu|scan|cleanup|goto}" >&2
+    *)          echo "Usage: tracker.sh {init|hook|status-bar|refresh|menu|scan|cleanup|goto}" >&2
                 exit 1 ;;
 esac

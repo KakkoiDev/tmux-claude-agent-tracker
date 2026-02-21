@@ -16,13 +16,31 @@ load_config
 # Bind menu key
 tmux bind-key "$KEYBINDING" run-shell "$SCRIPTS_DIR/tracker.sh menu"
 
-# Inject status bar (strip stale entries first, then add if missing)
-current_status_right=$(tmux show-option -gqv status-right)
-# Remove legacy "#(claude-agent-tracker status-bar) | " left by old installs or session restore
-current_status_right="${current_status_right//#(claude-agent-tracker status-bar) | /}"
-status_cmd="#($SCRIPTS_DIR/tracker.sh status-bar)"
-if [[ "$current_status_right" != *"tracker.sh status-bar"* ]]; then
-    tmux set -g status-right "${status_cmd} | ${current_status_right}"
-else
-    tmux set -g status-right "${current_status_right}"
+# Set status-interval for periodic blocked timer refresh.
+# Only lower it — never override a user's custom short interval.
+tracker_interval=$(get_tmux_option "@claude-tracker-status-interval" "5")
+current_interval=$(tmux show-option -gqv status-interval 2>/dev/null)
+current_interval="${current_interval:-15}"
+if [[ "$current_interval" -gt "$tracker_interval" ]]; then
+    tmux set -g status-interval "$tracker_interval"
 fi
+
+# Initialize tmux option for instant status display
+tmux set -gq @claude-tracker-status ""
+
+# Inject status bar:
+#   #{@claude-tracker-status}  — instant display, re-evaluated on refresh-client -S
+#   #(tracker.sh refresh)      — periodic blocked timer update (no visible output)
+current_status_right=$(tmux show-option -gqv status-right)
+
+# Strip all tracker injections (legacy, old #() format, new #{@}+#() format)
+current_status_right="${current_status_right//#(claude-agent-tracker status-bar) | /}"
+if [[ "$current_status_right" == *"tracker.sh"* ]] || [[ "$current_status_right" == *"@claude-tracker-status"* ]]; then
+    current_status_right=$(printf '%s' "$current_status_right" | sed -E \
+        -e 's~#\{@claude-tracker-status\}~~g' \
+        -e 's~#\([^)]*tracker\.sh (status-bar|refresh)\) [|] ~~g' \
+        -e 's~#\([^)]*tracker\.sh (status-bar|refresh)\)~~g')
+fi
+
+status_cmd="#{@claude-tracker-status}#($SCRIPTS_DIR/tracker.sh refresh)"
+tmux set -g status-right "${status_cmd} | ${current_status_right}"

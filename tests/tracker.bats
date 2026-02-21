@@ -685,6 +685,46 @@ teardown() {
 
 # ── Idle count stability (no flicker) ──────────────────────────────
 
+# ── Instant push via tmux option ─────────────────────────────────────
+
+@test "_write_cache sets tmux option @claude-tracker-status" {
+    local tmux_set_value=""
+    tmux() {
+        if [[ "${1:-}" == "set" && "${2:-}" == "-gq" && "${3:-}" == "@claude-tracker-status" ]]; then
+            tmux_set_value="${4:-}"
+        fi
+        return 0
+    }
+
+    insert_session "s1" "working" "%1"
+    _render_cache
+    [[ -n "$tmux_set_value" ]]
+    [[ "$tmux_set_value" == *"1*"* ]]
+}
+
+@test "cmd_refresh produces no stdout" {
+    insert_session "s1" "working" "%1"
+    local out
+    out=$(cmd_refresh)
+    [[ -z "$out" ]]
+}
+
+@test "cmd_refresh updates cache file" {
+    insert_session "s1" "blocked" "%1"
+    sql "UPDATE sessions SET updated_at = unixepoch() - 300 WHERE session_id='s1';"
+    cmd_refresh
+    [[ -f "$CACHE" ]]
+    [[ "$(cat "$CACHE")" == *"1!"* ]]
+    [[ "$(cat "$CACHE")" == *"5m"* ]]
+}
+
+@test "cmd_refresh is no-op without DB" {
+    rm -f "$DB"
+    local out
+    out=$(cmd_refresh)
+    [[ -z "$out" ]]
+}
+
 @test "atomic eviction keeps count stable during pane takeover" {
     insert_session "old" "idle" "%1" ""
     insert_session "other" "idle" "%2" ""
