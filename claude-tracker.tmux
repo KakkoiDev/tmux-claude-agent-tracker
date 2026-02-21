@@ -17,8 +17,6 @@ load_config
 tmux bind-key "$KEYBINDING" run-shell "$SCRIPTS_DIR/tracker.sh menu"
 
 # Clear completed status when user navigates to a pane
-# session-window-changed: user switches windows (covers most navigation)
-# window-pane-changed: user switches panes within a window
 tmux set-hook -g session-window-changed "run-shell -b '$SCRIPTS_DIR/tracker.sh pane-focus #{pane_id}'"
 tmux set-hook -g window-pane-changed "run-shell -b '$SCRIPTS_DIR/tracker.sh pane-focus #{pane_id}'"
 

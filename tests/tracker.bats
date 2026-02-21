@@ -888,6 +888,12 @@ _integration_mock() {
     [[ "$(get_status s1)" == "idle" ]]
 }
 
+@test "cmd_pane_focus does not clear completed on different pane" {
+    insert_session "s1" "completed" "%1"
+    cmd_pane_focus "%2"
+    [[ "$(get_status s1)" == "completed" ]]
+}
+
 @test "cmd_pane_focus is no-op for non-completed sessions" {
     insert_session "s1" "working" "%1"
     insert_session "s2" "idle" "%2"

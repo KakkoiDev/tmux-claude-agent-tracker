@@ -65,7 +65,7 @@ Transition guards:
 - `PostToolUse` / `PostToolUseFailure` -> working (`WHERE status!='working'`, no-op when already working)
 - `Notification` -> blocked (`WHERE status = 'working'`, only from working state; `permission_prompt` or `elicitation_dialog` only)
 - `goto` -> idle (`WHERE status='completed'`, clears completed when user focuses pane via menu)
-- `session-window-changed` / `window-pane-changed` -> idle (`WHERE status='completed'`, clears completed when user navigates to pane)
+- `session-window-changed` / `window-pane-changed` -> idle (`WHERE status='completed' AND tmux_pane=<focused_pane>`, clears completed when user navigates to pane)
 
 ## Hook Performance
 

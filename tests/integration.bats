@@ -390,7 +390,7 @@ teardown() {
     local pane
     pane=$(sql "SELECT tmux_pane FROM sessions WHERE session_id='$sid';")
 
-    # Fire pane-focus command
+    # Fire pane-focus command (simulates session-window-changed hook)
     env TRACKER_DIR="$TRACKER_DIR" DB="$DB" CACHE="$CACHE" \
         COLOR_WORKING="$COLOR_WORKING" COLOR_BLOCKED="$COLOR_BLOCKED" \
         COLOR_IDLE="$COLOR_IDLE" COLOR_COMPLETED="$COLOR_COMPLETED" \
