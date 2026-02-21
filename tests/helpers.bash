@@ -18,9 +18,6 @@ setup_test_env() {
     export COLOR_COMPLETED="black"
     export SOUND="0"
 
-    # Clear TMUX_PANE — prevents inherited env from affecting Stop tests
-    export TMUX_PANE=""
-
     # Initialize DB schema (suppress PRAGMA output)
     mkdir -p "$TRACKER_DIR"
     sqlite3 "$DB" <<'SQL' >/dev/null 2>&1
