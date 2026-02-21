@@ -59,9 +59,29 @@ WRAPPER
     env TRACKER_DIR="$TRACKER_DIR" DB="$DB" CACHE="$CACHE" \
         PATH="$TEST_TMPDIR/bin:$PATH" \
         bash "$TRACKER_SH" init >/dev/null 2>&1
+
+    # Leak guard: snapshot production DB session count
+    local prod_db="$HOME/.tmux-claude-agent-tracker/tracker.db"
+    if [[ -f "$prod_db" ]]; then
+        PROD_SESSION_COUNT=$(sqlite3 "$prod_db" "SELECT COUNT(*) FROM sessions;" 2>/dev/null || echo "-1")
+    else
+        PROD_SESSION_COUNT="-1"
+    fi
+    export PROD_SESSION_COUNT
 }
 
 teardown_integration() {
+    # Leak guard: assert production DB wasn't modified
+    local prod_db="$HOME/.tmux-claude-agent-tracker/tracker.db"
+    if [[ "${PROD_SESSION_COUNT:-}" != "-1" && -f "$prod_db" ]]; then
+        local after
+        after=$(sqlite3 "$prod_db" "SELECT COUNT(*) FROM sessions;" 2>/dev/null || echo "-1")
+        if [[ "$after" != "-1" && "$after" -gt "$PROD_SESSION_COUNT" ]]; then
+            echo "LEAK GUARD: production DB session count increased from $PROD_SESSION_COUNT to $after" >&2
+            return 1
+        fi
+    fi
+
     # Kill isolated tmux server and remove its socket file
     if [[ -n "${TMUX_SOCK:-}" ]]; then
         $(command -v tmux) -L "$TMUX_SOCK" kill-server 2>/dev/null || true
