@@ -385,6 +385,16 @@ teardown() {
     [[ "$output" == "it''s a test" ]]
 }
 
+@test "escaped session_id does not match other sessions" {
+    insert_session "normal" "working" "%1"
+    # Session ID with SQL injection attempt
+    local evil="x'; DELETE FROM sessions;--"
+    _hook_prompt "$(sql_esc "$evil")"
+    # normal session untouched, evil session not found
+    [[ "$(get_status normal)" == "working" ]]
+    [[ "$(count_sessions)" -eq 1 ]]
+}
+
 # ── Idle count stability (no flicker) ──────────────────────────────
 
 @test "SessionStart does not reset working session to idle" {

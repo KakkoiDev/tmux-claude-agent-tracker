@@ -77,6 +77,7 @@ cmd_hook() {
     local sid
     sid=$(_json_val "$json" "session_id")
     [[ -z "$sid" ]] && return 0
+    sid=$(sql_esc "$sid")
 
     # _ensure_session only for hooks that may create sessions.
     # Hot-path hooks (PostToolUse, Notification, Stop, TeammateIdle) skip this
@@ -230,6 +231,7 @@ _hook_subagent_start() {
 
     sub_id=$(_json_val "$json" "subagent_id")
     [[ -z "$sub_id" ]] && sub_id="$sid"
+    sub_id=$(sql_esc "$sub_id")
 
     cwd=$(_json_val "$json" "cwd")
     [[ -z "$cwd" ]] && cwd="${PWD}"
@@ -258,7 +260,9 @@ _hook_subagent_stop() {
     local sub_id
     sub_id=$(_json_val "$json" "subagent_id")
     [[ -z "$sub_id" ]] && sub_id=$(_json_val "$json" "session_id")
-    [[ -n "$sub_id" ]] && sql "DELETE FROM sessions WHERE session_id='$sub_id';"
+    [[ -z "$sub_id" ]] && return 0
+    sub_id=$(sql_esc "$sub_id")
+    sql "DELETE FROM sessions WHERE session_id='$sub_id';"
 }
 
 _hook_teammate_idle() {
@@ -266,8 +270,10 @@ _hook_teammate_idle() {
     local tid
     tid=$(_json_val "$json" "teammate_id")
     [[ -z "$tid" ]] && tid=$(_json_val "$json" "session_id")
-    [[ -n "$tid" ]] && sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
-                            WHERE session_id='$tid';"
+    [[ -z "$tid" ]] && return 0
+    tid=$(sql_esc "$tid")
+    sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
+         WHERE session_id='$tid';"
 }
 
 # ── render cache ──────────────────────────────────────────────────────
