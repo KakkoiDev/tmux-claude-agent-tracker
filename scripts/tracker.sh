@@ -107,11 +107,6 @@ cmd_hook() {
             _reap_dead 2>/dev/null || true ;;
     esac
 
-    # DEBUG trace — remove after diagnosing cache-stale bug
-    {
-        echo "$(date +%s) event=$event sid=$sid changed=$__changed render='$__render'"
-    } >> /tmp/claude-tracker-debug.log 2>/dev/null || true
-
     if [[ -n "$__render" ]]; then
         # Fast path: render data already fetched in same sqlite3 call
         _load_config_fast
