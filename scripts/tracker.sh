@@ -517,7 +517,7 @@ case "${1:-}" in
     hook)       cmd_hook "${2:?Usage: tracker.sh hook <event>}" ;;
     status-bar) cmd_status_bar ;;
     refresh)    cmd_refresh ;;
-    menu)       _reap_dead 2>/dev/null || true; cmd_scan 2>/dev/null || true; cmd_menu "${2:-1}" ;;
+    menu)       tmux display-message "Opening..." 2>/dev/null || true; _reap_dead 2>/dev/null || true; cmd_scan 2>/dev/null || true; cmd_menu "${2:-1}" ;;
     goto)       cmd_goto "${2:?Usage: tracker.sh goto <target>}" ;;
     scan)       cmd_scan ;;
     cleanup)    cmd_cleanup ;;
