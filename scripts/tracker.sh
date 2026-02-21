@@ -192,6 +192,9 @@ _hook_stop() {
     local sid="$1"
     sql "UPDATE sessions SET status='completed', updated_at=unixepoch()
          WHERE session_id='$sid' AND status IN ('working', 'blocked');"
+    # Auto-clear if user is viewing this pane. tmux resolves #{pane_id} at
+    # call time (not subprocess context), so this works reliably.
+    tmux run-shell -b "$SCRIPTS_DIR/tracker.sh pane-focus #{pane_id}" 2>/dev/null || true
 }
 
 # Hot path: UPDATE + render in one sqlite3 call

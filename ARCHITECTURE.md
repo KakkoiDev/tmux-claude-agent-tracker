@@ -60,7 +60,7 @@ stateDiagram-v2
 
 Transition guards:
 - `SessionStart` -> idle (INSERT OR IGNORE, no-op if session exists)
-- `Stop` -> completed (`WHERE status IN ('working', 'blocked')`, no-op on idle/completed)
+- `Stop` -> completed (`WHERE status IN ('working', 'blocked')`, no-op on idle/completed; fires `tmux run-shell` pane-focus to auto-clear if user is viewing the pane)
 - `UserPromptSubmit` -> working (unconditional, handles idle/completed/blocked->working)
 - `PostToolUse` / `PostToolUseFailure` -> working (`WHERE status!='working'`, no-op when already working)
 - `Notification` -> blocked (`WHERE status = 'working'`, only from working state; `permission_prompt` or `elicitation_dialog` only)
