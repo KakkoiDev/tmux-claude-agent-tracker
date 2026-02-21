@@ -51,7 +51,7 @@ stateDiagram-v2
     blocked --> completed : Stop (inactive pane)
     blocked --> idle : Stop (active pane)
 
-    completed --> idle : goto / pane-focus-in
+    completed --> idle : goto / window-changed / pane-changed
     completed --> working : UserPromptSubmit / PostToolUse
 
     idle --> [*] : SessionEnd
@@ -67,7 +67,7 @@ Transition guards:
 - `PostToolUse` / `PostToolUseFailure` -> working (`WHERE status!='working'`, no-op when already working)
 - `Notification` -> blocked (`WHERE status = 'working'`, only from working state; `permission_prompt` or `elicitation_dialog` only)
 - `goto` -> idle (`WHERE status='completed'`, clears completed when user focuses pane via menu)
-- `pane-focus-in` -> idle (`WHERE status='completed'`, clears completed when user navigates to pane)
+- `session-window-changed` / `window-pane-changed` -> idle (`WHERE status='completed'`, clears completed when user navigates to pane)
 
 ## Hook Performance
 
@@ -165,7 +165,7 @@ Multiple concurrent hook processes. WAL mode handles this:
 | PostToolUse | blocked/idle/completed -> working | `status!='working'` |
 | PostToolUseFailure | blocked/idle/completed -> working | `status!='working'` (catches rejected tools / interrupts) |
 | Stop | working/blocked -> completed (or idle if active pane) | `status IN ('working', 'blocked')` (does NOT fire on user interrupt; checks `#{pane_active}`) |
-| pane-focus-in | completed -> idle | `status='completed'` AND `tmux_pane` matches focused pane |
+| session-window-changed / window-pane-changed | completed -> idle | `status='completed'` AND `tmux_pane` matches focused pane |
 | Notification | working -> blocked | `status='working'`, `permission_prompt` or `elicitation_dialog` only |
 | SessionEnd | any -> (deleted) | unconditional |
 | TeammateIdle | any -> idle | unconditional |
