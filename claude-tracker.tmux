@@ -19,6 +19,7 @@ tmux bind-key "$KEYBINDING" run-shell "$SCRIPTS_DIR/tracker.sh menu"
 # Clear completed status when user navigates to a pane
 tmux set-hook -g session-window-changed "run-shell -b '$SCRIPTS_DIR/tracker.sh pane-focus #{pane_id}'"
 tmux set-hook -g window-pane-changed "run-shell -b '$SCRIPTS_DIR/tracker.sh pane-focus #{pane_id}'"
+tmux set-hook -g client-session-changed "run-shell -b '$SCRIPTS_DIR/tracker.sh pane-focus #{pane_id}'"
 
 # Set status-interval for periodic blocked timer refresh.
 # Only lower it — never override a user's custom short interval.

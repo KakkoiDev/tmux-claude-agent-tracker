@@ -190,8 +190,20 @@ _hook_post_tool() {
 
 _hook_stop() {
     local sid="$1"
-    sql "UPDATE sessions SET status='completed', updated_at=unixepoch()
-         WHERE session_id='$sid' AND status IN ('working', 'blocked');"
+    # Check if user is currently viewing this pane.
+    # display-message without -t returns the CLIENT's active pane.
+    local my_pane="${TMUX_PANE:-}"
+    local viewed_pane=""
+    if [[ -n "$my_pane" ]]; then
+        viewed_pane=$(tmux display-message -p '#{pane_id}' 2>/dev/null) || true
+    fi
+    if [[ -n "$viewed_pane" && "$my_pane" == "$viewed_pane" ]]; then
+        sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
+             WHERE session_id='$sid' AND status IN ('working', 'blocked');"
+    else
+        sql "UPDATE sessions SET status='completed', updated_at=unixepoch()
+             WHERE session_id='$sid' AND status IN ('working', 'blocked');"
+    fi
 }
 
 # Hot path: UPDATE + render in one sqlite3 call

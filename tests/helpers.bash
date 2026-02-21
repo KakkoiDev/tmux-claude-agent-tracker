@@ -17,6 +17,7 @@ setup_test_env() {
     export COLOR_IDLE="black"
     export COLOR_COMPLETED="black"
     export SOUND="0"
+    export TMUX_PANE=""
 
     # Initialize DB schema (suppress PRAGMA output)
     mkdir -p "$TRACKER_DIR"

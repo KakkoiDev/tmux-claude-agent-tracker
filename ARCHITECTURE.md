@@ -43,13 +43,15 @@ stateDiagram-v2
     [*] --> idle : SessionStart
 
     idle --> working : UserPromptSubmit / PostToolUse
-    working --> completed : Stop
+    working --> completed : Stop (not viewing pane)
+    working --> idle : Stop (viewing pane)
     working --> blocked : Notification (permission/elicitation)
 
     blocked --> working : UserPromptSubmit / PostToolUse / PostToolUseFailure
-    blocked --> completed : Stop
+    blocked --> completed : Stop (not viewing pane)
+    blocked --> idle : Stop (viewing pane)
 
-    completed --> idle : goto / window-changed / pane-changed
+    completed --> idle : goto / navigation hooks
     completed --> working : UserPromptSubmit / PostToolUse
 
     idle --> [*] : SessionEnd
@@ -60,7 +62,7 @@ stateDiagram-v2
 
 Transition guards:
 - `SessionStart` -> idle (INSERT OR IGNORE, no-op if session exists)
-- `Stop` -> completed (`WHERE status IN ('working', 'blocked')`, no-op on idle/completed)
+- `Stop` -> completed or idle (`WHERE status IN ('working', 'blocked')`, no-op on idle/completed; compares `$TMUX_PANE` with client's active `#{pane_id}` — idle if user is viewing, completed otherwise)
 - `UserPromptSubmit` -> working (unconditional, handles idle/completed/blocked->working)
 - `PostToolUse` / `PostToolUseFailure` -> working (`WHERE status!='working'`, no-op when already working)
 - `Notification` -> blocked (`WHERE status = 'working'`, only from working state; `permission_prompt` or `elicitation_dialog` only)
@@ -163,7 +165,7 @@ Multiple concurrent hook processes. WAL mode handles this:
 | PostToolUse | blocked/idle/completed -> working | `status!='working'` |
 | PostToolUseFailure | blocked/idle/completed -> working | `status!='working'` (catches rejected tools / interrupts) |
 | Stop | working/blocked -> completed | `status IN ('working', 'blocked')` (does NOT fire on user interrupt) |
-| session-window-changed / window-pane-changed | completed -> idle | `status='completed'` AND `tmux_pane` matches focused pane |
+| session-window-changed / window-pane-changed / client-session-changed | completed -> idle | `status='completed'` AND `tmux_pane` matches focused pane |
 | Notification | working -> blocked | `status='working'`, `permission_prompt` or `elicitation_dialog` only |
 | SessionEnd | any -> (deleted) | unconditional |
 | TeammateIdle | any -> idle | unconditional |
