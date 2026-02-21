@@ -37,6 +37,7 @@ COLOR_WORKING=""
 COLOR_BLOCKED=""
 COLOR_IDLE=""
 SOUND=""
+SHOW_PROJECT=""
 
 load_config() {
     local cache="${TRACKER_DIR:-$HOME/.tmux-claude-agent-tracker}/config_cache"
@@ -61,6 +62,7 @@ load_config() {
     COLOR_BLOCKED=$(get_tmux_option "@claude-tracker-color-blocked" "black")
     COLOR_IDLE=$(get_tmux_option "@claude-tracker-color-idle" "black")
     SOUND=$(get_tmux_option "@claude-tracker-sound" "0")
+    SHOW_PROJECT=$(get_tmux_option "@claude-tracker-show-project" "0")
 
     # Atomic write — safe for concurrent hook invocations
     cat > "${cache}.tmp" <<EOF
@@ -73,6 +75,7 @@ COLOR_WORKING='$COLOR_WORKING'
 COLOR_BLOCKED='$COLOR_BLOCKED'
 COLOR_IDLE='$COLOR_IDLE'
 SOUND='$SOUND'
+SHOW_PROJECT='$SHOW_PROJECT'
 EOF
     mv -f "${cache}.tmp" "$cache"
 }

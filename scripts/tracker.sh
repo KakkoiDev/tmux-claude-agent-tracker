@@ -305,6 +305,10 @@ _write_cache() {
         result+="#[fg=${COLOR_BLOCKED}]${b}!#[default]"
     fi
 
+    if [[ -n "${2:-}" ]]; then
+        result+=" @${2}"
+    fi
+
     printf '%s' "${result% }" > "$CACHE.tmp"
     mv -f "$CACHE.tmp" "$CACHE"
 }
@@ -319,7 +323,15 @@ _render_cache() {
         COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0),
         COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked'),0)
         FROM sessions;")
-    _write_cache "$counts"
+
+    local project=""
+    if [[ "${SHOW_PROJECT:-0}" == "1" ]]; then
+        project=$(sql "SELECT project_name FROM sessions
+                       WHERE (agent_type IS NULL OR agent_type='')
+                       ORDER BY CASE WHEN status='blocked' THEN 0 ELSE 1 END,
+                                updated_at DESC LIMIT 1;")
+    fi
+    _write_cache "$counts" "$project"
 }
 
 # ── status-bar ────────────────────────────────────────────────────────

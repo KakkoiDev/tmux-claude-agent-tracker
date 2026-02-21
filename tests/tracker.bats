@@ -309,6 +309,38 @@ teardown() {
     [[ "$out" == *"1!2h"* ]]
 }
 
+@test "SHOW_PROJECT=1 includes project name in cache" {
+    export SHOW_PROJECT="1"
+    insert_session "s1" "working" "%1"
+    sql "UPDATE sessions SET project_name='myapp' WHERE session_id='s1';"
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    [[ "$out" == *"@myapp"* ]]
+}
+
+@test "SHOW_PROJECT=0 omits project name from cache" {
+    export SHOW_PROJECT="0"
+    insert_session "s1" "working" "%1"
+    sql "UPDATE sessions SET project_name='myapp' WHERE session_id='s1';"
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    [[ "$out" != *"@myapp"* ]]
+}
+
+@test "SHOW_PROJECT prefers blocked session project" {
+    export SHOW_PROJECT="1"
+    insert_session "s1" "working" "%1"
+    sql "UPDATE sessions SET project_name='working-proj' WHERE session_id='s1';"
+    insert_session "s2" "blocked" "%2"
+    sql "UPDATE sessions SET project_name='blocked-proj' WHERE session_id='s2';"
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    [[ "$out" == *"@blocked-proj"* ]]
+}
+
 @test "blocked timer no suffix for <1 minute" {
     insert_session "b1" "blocked" "%1"
     # updated_at is now (just inserted), so dur=0
