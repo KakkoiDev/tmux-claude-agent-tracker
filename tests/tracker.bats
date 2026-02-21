@@ -377,6 +377,102 @@ teardown() {
     [[ "$out" =~ 1!#\[default\] ]]
 }
 
+# ── Cache lifecycle (hot-path render) ────────────────────────────────
+
+@test "PostToolUse updates cache when transitioning blocked to working" {
+    insert_session "s1" "blocked" "%1"
+    _render_cache
+    local before
+    before=$(cat "$CACHE")
+    [[ "$before" == *"1!"* ]]
+
+    _hook_post_tool "s1"
+    [[ "$(get_status s1)" == "working" ]]
+    # __render was set — _write_cache should have been called by cmd_hook
+    # but since we call _hook_post_tool directly, we must verify __render
+    [[ -n "$__render" ]]
+    _load_config_fast
+    _write_cache "$__render"
+    local after
+    after=$(cat "$CACHE")
+    [[ "$after" == *"1*"* ]]
+    [[ "$after" == *"0!"* ]]
+}
+
+@test "Notification updates cache when transitioning working to blocked" {
+    insert_session "s1" "working" "%1"
+    _render_cache
+    local before
+    before=$(cat "$CACHE")
+    [[ "$before" == *"1*"* ]]
+
+    _hook_notification "s1"
+    [[ "$(get_status s1)" == "blocked" ]]
+    [[ -n "$__render" ]]
+    _load_config_fast
+    _write_cache "$__render"
+    local after
+    after=$(cat "$CACHE")
+    [[ "$after" == *"1!"* ]]
+    [[ "$after" == *"0*"* ]]
+}
+
+@test "Stop clears blocked from cache" {
+    insert_session "s1" "blocked" "%1"
+    _render_cache
+    [[ "$(cat "$CACHE")" == *"1!"* ]]
+
+    _hook_stop "s1" '{}'
+    _render_cache
+    local after
+    after=$(cat "$CACHE")
+    [[ "$after" == *"1."* ]]
+    [[ "$after" == *"0!"* ]]
+}
+
+@test "SessionEnd clears all counts from cache" {
+    insert_session "s1" "blocked" "%1"
+    _render_cache
+    [[ "$(cat "$CACHE")" == *"1!"* ]]
+
+    sql "DELETE FROM sessions WHERE session_id='s1';"
+    _render_cache
+    local after
+    after=$(cat "$CACHE")
+    [[ "$after" == *"0."* ]]
+    [[ "$after" == *"0*"* ]]
+    [[ "$after" == *"0!"* ]]
+}
+
+@test "full lifecycle: blocked -> PostToolUse -> Stop -> cache is clean" {
+    insert_session "s1" "blocked" "%1"
+    _render_cache
+    [[ "$(cat "$CACHE")" == *"1!"* ]]
+
+    # Transition blocked -> working via PostToolUse
+    __changed=1
+    __render=""
+    _hook_post_tool "s1"
+    [[ -n "$__render" ]]
+    _load_config_fast
+    _write_cache "$__render"
+    [[ "$(cat "$CACHE")" == *"1*"* ]]
+    [[ "$(cat "$CACHE")" == *"0!"* ]]
+
+    # Stop -> idle
+    _hook_stop "s1" '{}'
+    _render_cache
+    [[ "$(cat "$CACHE")" == *"1."* ]]
+    [[ "$(cat "$CACHE")" == *"0!"* ]]
+
+    # SessionEnd -> deleted
+    sql "DELETE FROM sessions WHERE session_id='s1';"
+    _render_cache
+    [[ "$(cat "$CACHE")" == *"0."* ]]
+    [[ "$(cat "$CACHE")" == *"0*"* ]]
+    [[ "$(cat "$CACHE")" == *"0!"* ]]
+}
+
 # ── cmd_status_bar live timer ────────────────────────────────────────
 
 @test "cmd_status_bar is a pure cache read" {

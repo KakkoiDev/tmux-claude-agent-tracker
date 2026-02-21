@@ -110,10 +110,10 @@ cmd_hook() {
     if [[ -n "$__render" ]]; then
         # Fast path: render data already fetched in same sqlite3 call
         _load_config_fast
-        _write_cache "$__render"
+        _write_cache "$__render" 2>/dev/null || _render_cache 2>/dev/null || true
         tmux refresh-client -S 2>/dev/null || true
     elif [[ "$__changed" -eq 1 ]]; then
-        _render_cache
+        _render_cache 2>/dev/null || true
         tmux refresh-client -S 2>/dev/null || true
     fi
 
@@ -289,6 +289,7 @@ _load_config_fast() {
 _write_cache() {
     local w b i dur
     IFS='|' read -r w b i dur <<< "$1"
+    w="${w:-0}"; b="${b:-0}"; i="${i:-0}"; dur="${dur:-0}"
     local result=""
     result+="#[fg=${COLOR_IDLE}]${i}.#[default] "
     result+="#[fg=${COLOR_WORKING}]${w}*#[default] "
@@ -323,14 +324,15 @@ _render_cache() {
         COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0),
         COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions
                   WHERE status='blocked' AND (agent_type IS NULL OR agent_type='')),0)
-        FROM sessions WHERE (agent_type IS NULL OR agent_type='');")
+        FROM sessions WHERE (agent_type IS NULL OR agent_type='');") || return 0
+    [[ -z "$counts" ]] && counts="0|0|0|0"
 
     local project=""
     if [[ "${SHOW_PROJECT:-0}" == "1" ]]; then
         project=$(sql "SELECT project_name FROM sessions
                        WHERE (agent_type IS NULL OR agent_type='')
                        ORDER BY CASE WHEN status='blocked' THEN 0 ELSE 1 END,
-                                updated_at DESC LIMIT 1;")
+                                updated_at DESC LIMIT 1;" 2>/dev/null || true)
     fi
     _write_cache "$counts" "$project"
 }
