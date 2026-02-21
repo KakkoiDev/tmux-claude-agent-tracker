@@ -250,6 +250,32 @@ teardown() {
     [[ "$(get_status s1)" == "idle" ]]
 }
 
+# ── Subagent exclusion from counts ───────────────────────────────────
+
+@test "_render_cache excludes subagents from counts" {
+    insert_session "main1" "working" "%1" ""
+    insert_session "sub1" "working" "%1" "researcher"
+    insert_session "main2" "idle" "%2" ""
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    # Should show 1 working, 1 idle (not 2 working)
+    [[ "$out" == *"1."* ]]
+    [[ "$out" == *"1*"* ]]
+}
+
+@test "blocked timer excludes subagent timestamps" {
+    insert_session "main1" "blocked" "%1" ""
+    sql "UPDATE sessions SET updated_at = unixepoch() - 300 WHERE session_id='main1';"
+    insert_session "sub1" "blocked" "%1" "subagent"
+    sql "UPDATE sessions SET updated_at = unixepoch() - 600 WHERE session_id='sub1';"
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    # Timer should use main1's 5min, not sub1's 10min
+    [[ "$out" == *"1!5m"* ]]
+}
+
 # ── Cache rendering ──────────────────────────────────────────────────
 
 @test "_render_cache produces correct format with no blocked" {

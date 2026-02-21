@@ -27,8 +27,8 @@ _RENDER_SQL="SELECT
     COALESCE(SUM(CASE WHEN status='working' THEN 1 ELSE 0 END),0) || '|' ||
     COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END),0) || '|' ||
     COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0) || '|' ||
-    COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked'),0)
-    FROM sessions"
+    COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked' AND (agent_type IS NULL OR agent_type='')),0)
+    FROM sessions WHERE (agent_type IS NULL OR agent_type='')"
 
 _play_sound() {
     case "$(uname)" in
@@ -321,8 +321,9 @@ _render_cache() {
         COALESCE(SUM(CASE WHEN status='working' THEN 1 ELSE 0 END),0),
         COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END),0),
         COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0),
-        COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked'),0)
-        FROM sessions;")
+        COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions
+                  WHERE status='blocked' AND (agent_type IS NULL OR agent_type='')),0)
+        FROM sessions WHERE (agent_type IS NULL OR agent_type='');")
 
     local project=""
     if [[ "${SHOW_PROJECT:-0}" == "1" ]]; then
