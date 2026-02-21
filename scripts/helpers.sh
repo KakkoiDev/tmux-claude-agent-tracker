@@ -39,7 +39,7 @@ COLOR_IDLE=""
 SOUND=""
 
 load_config() {
-    local cache="/tmp/claude-tracker-config"
+    local cache="${TRACKER_DIR:-$HOME/.tmux-claude-agent-tracker}/config_cache"
 
     # Use cache if fresh (< 60s) — shared across all hook invocations
     if [[ -f "$cache" ]]; then

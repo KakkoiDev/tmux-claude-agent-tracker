@@ -72,7 +72,7 @@ These hooks also skip `_ensure_session` (the session is guaranteed to exist by t
 
 ### Config loading
 
-`load_config` (helpers.sh) fetches tmux options and caches them to `/tmp/claude-tracker-config`. The full check runs `date` + `stat` to verify freshness (~8ms in subprocesses).
+`load_config` (helpers.sh) fetches tmux options and caches them to `$TRACKER_DIR/config_cache`. The full check runs `date` + `stat` to verify freshness (~8ms in subprocesses).
 
 Hook path uses `_load_config_fast` which sources the cache file directly without freshness check. Non-hook paths (status-bar, menu) use the full `load_config` with 60s TTL.
 

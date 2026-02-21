@@ -277,7 +277,7 @@ _hook_teammate_idle() {
 # Full load_config (with freshness) runs on status-bar/menu paths.
 _load_config_fast() {
     [[ -n "${COLOR_WORKING:-}" ]] && return 0
-    local _cc="/tmp/claude-tracker-config"
+    local _cc="$TRACKER_DIR/config_cache"
     if [[ -f "$_cc" ]]; then
         source "$_cc"
     else
