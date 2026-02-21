@@ -31,6 +31,33 @@ teardown() {
     [[ "$(get_status s1)" == "blocked" ]]
 }
 
+@test "Notification permission_prompt sets working to blocked" {
+    insert_session "s1" "working" "%1"
+    __json='{"session_id":"s1","notification_type":"permission_prompt"}'
+    _hook_notification "s1"
+    [[ "$(get_status s1)" == "blocked" ]]
+}
+
+@test "Notification idle_prompt does not set blocked" {
+    insert_session "s1" "working" "%1"
+    __json='{"session_id":"s1","notification_type":"idle_prompt"}'
+    _hook_notification "s1"
+    [[ "$(get_status s1)" == "working" ]]
+}
+
+@test "Notification auth_success does not set blocked" {
+    insert_session "s1" "working" "%1"
+    __json='{"session_id":"s1","notification_type":"auth_success"}'
+    _hook_notification "s1"
+    [[ "$(get_status s1)" == "working" ]]
+}
+
+@test "PostToolUseFailure transitions blocked to working" {
+    insert_session "s1" "blocked" "%1"
+    _hook_post_tool "s1"
+    [[ "$(get_status s1)" == "working" ]]
+}
+
 @test "Notification does not set idle to blocked" {
     insert_session "s1" "idle" "%1"
     _hook_notification "s1" '{}'

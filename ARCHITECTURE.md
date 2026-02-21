@@ -157,8 +157,9 @@ Multiple concurrent hook processes. WAL mode handles this:
 | SessionStart | (new) -> working | INSERT OR REPLACE |
 | UserPromptSubmit | any -> working | unconditional |
 | PostToolUse | blocked/idle -> working | `status!='working'` |
-| Stop | any -> idle | unconditional |
-| Notification | working -> blocked | `status='working'` |
+| PostToolUseFailure | blocked/idle -> working | `status!='working'` (catches rejected tools / interrupts) |
+| Stop | any -> idle | unconditional (does NOT fire on user interrupt) |
+| Notification | working -> blocked | `status='working'`, `notification_type='permission_prompt'` only |
 | SessionEnd | any -> (deleted) | unconditional |
 | SubagentStart | (new) -> working | INSERT OR REPLACE |
 | SubagentStop | any -> (deleted) | unconditional |

@@ -80,18 +80,19 @@ cmd_hook() {
     sid=$(sql_esc "$sid")
 
     # _ensure_session only for hooks that may create sessions.
-    # Hot-path hooks (PostToolUse, Notification, Stop, TeammateIdle) skip this
+    # Hot-path hooks (PostToolUse, PostToolUseFailure, Notification, Stop, TeammateIdle) skip this
     # — their UPDATEs are no-ops if session doesn't exist yet.
     case "$event" in
         SessionStart|UserPromptSubmit|SubagentStart)
             _ensure_session "$sid" "$json" ;;
     esac
 
-    local __changed=1 __render=""
+    local __changed=1 __render="" __json="$json"
     case "$event" in
         SessionStart)     _hook_session_start "$sid" "$json" ;;
         UserPromptSubmit) _hook_prompt "$sid" "$json" ;;
         PostToolUse)      _hook_post_tool "$sid" ;;
+        PostToolUseFailure) _hook_post_tool "$sid" ;;
         Stop)             _hook_stop "$sid" "$json" ;;
         Notification)     _hook_notification "$sid" ;;
         SessionEnd)       sql "DELETE FROM sessions WHERE session_id='$sid';" ;;
@@ -212,8 +213,16 @@ _hook_stop() {
 }
 
 # Hot path: UPDATE + render in one sqlite3 call
+# Only permission_prompt should set blocked. Other notification types
+# (idle_prompt, auth_success, elicitation_dialog) are not permission waits.
+# The hook config matcher should filter to permission_prompt, but we guard here too.
 _hook_notification() {
     local sid="$1"
+    local ntype
+    ntype=$(_json_val "$__json" "notification_type")
+    if [[ -n "$ntype" && "$ntype" != "permission_prompt" ]]; then
+        __changed=0; return 0
+    fi
     __render=$(sql "UPDATE sessions SET status='blocked', updated_at=unixepoch()
          WHERE session_id='$sid' AND status = 'working';
          SELECT CASE WHEN changes() = 0 THEN '' ELSE ($_RENDER_SQL) END;")
