@@ -192,6 +192,27 @@ teardown() {
     [[ "$(count_sessions)" -eq 0 ]]
 }
 
+@test "_reap_dead removes stale paneless sessions" {
+    insert_session "no-pane" "working" ""
+    # Backdate to 11 minutes ago (threshold is 10 min)
+    sql "UPDATE sessions SET updated_at = unixepoch() - 660 WHERE session_id='no-pane';"
+
+    insert_session "fresh-no-pane" "working" ""
+    # This one is recent — should survive
+
+    tmux() {
+        case "$1" in
+            list-panes) echo "%10 1234" ;;
+            *) true ;;
+        esac
+    }
+    pgrep() { return 0; }
+
+    _reap_dead
+    [[ -z "$(get_status no-pane)" ]]
+    [[ "$(get_status fresh-no-pane)" == "working" ]]
+}
+
 @test "_reap_dead keeps idle sessions even without claude process" {
     insert_session "s1" "idle" "%10"
 

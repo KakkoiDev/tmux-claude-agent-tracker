@@ -429,6 +429,12 @@ _reap_dead() {
         fi
     done <<< "$rows"
 
+    # Reap paneless sessions stale for >10 minutes (e.g. leaked test data)
+    local paneless_del
+    paneless_del=$(sql "DELETE FROM sessions WHERE (tmux_pane IS NULL OR tmux_pane='')
+         AND updated_at < unixepoch() - 600; SELECT changes();")
+    [[ "${paneless_del:-0}" -gt 0 ]] && changed=1
+
     if [[ "$changed" -eq 1 ]]; then _render_cache; fi
 }
 

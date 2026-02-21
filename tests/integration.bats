@@ -141,9 +141,10 @@ teardown() {
     local sid1="timer-hr-1"
     local sid2="timer-hr-2"
 
-    fire_hook SessionStart "{\"session_id\":\"$sid1\",\"cwd\":\"/tmp/test\"}"
-    fire_hook UserPromptSubmit "{\"session_id\":\"$sid1\",\"cwd\":\"/tmp/test\"}"
-    fire_hook Notification "{\"session_id\":\"$sid1\",\"cwd\":\"/tmp/test\"}"
+    # Use fire_hook_with_pane so backdated session survives paneless reaping
+    fire_hook_with_pane SessionStart "{\"session_id\":\"$sid1\",\"cwd\":\"/tmp/test\"}"
+    fire_hook_with_pane UserPromptSubmit "{\"session_id\":\"$sid1\",\"cwd\":\"/tmp/test\"}"
+    fire_hook_with_pane Notification "{\"session_id\":\"$sid1\",\"cwd\":\"/tmp/test\"}"
 
     # Backdate to 2 hours ago
     sql "UPDATE sessions SET updated_at = unixepoch() - 7200 WHERE session_id='$sid1';"
