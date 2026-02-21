@@ -750,6 +750,18 @@ _integration_mock() {
     [[ "$(get_status s1)" == "working" ]]
 }
 
+@test "integration: blocked then Stop sets idle" {
+    insert_session "s1" "blocked" "%1"
+    echo '{"session_id":"s1"}' | cmd_hook "Stop"
+    [[ "$(get_status s1)" == "idle" ]]
+}
+
+@test "integration: idle then PostToolUse sets working" {
+    insert_session "s1" "idle" "%1"
+    echo '{"session_id":"s1","tool_name":"Read"}' | cmd_hook "PostToolUse"
+    [[ "$(get_status s1)" == "working" ]]
+}
+
 @test "integration: Notification idle_prompt does not block" {
     insert_session "s1" "working" "%1"
     echo '{"session_id":"s1","notification_type":"idle_prompt"}' | cmd_hook "Notification"
