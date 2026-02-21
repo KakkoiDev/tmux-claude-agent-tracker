@@ -215,7 +215,7 @@ _hook_stop() {
 _hook_notification() {
     local sid="$1"
     __render=$(sql "UPDATE sessions SET status='blocked', updated_at=unixepoch()
-         WHERE session_id='$sid' AND status != 'blocked';
+         WHERE session_id='$sid' AND status = 'working';
          SELECT CASE WHEN changes() = 0 THEN '' ELSE ($_RENDER_SQL) END;")
     if [[ -z "$__render" ]]; then __changed=0; fi
 }

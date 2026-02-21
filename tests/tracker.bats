@@ -31,10 +31,21 @@ teardown() {
     [[ "$(get_status s1)" == "blocked" ]]
 }
 
-@test "Notification sets idle to blocked" {
+@test "Notification does not set idle to blocked" {
     insert_session "s1" "idle" "%1"
     _hook_notification "s1" '{}'
-    [[ "$(get_status s1)" == "blocked" ]]
+    [[ "$(get_status s1)" == "idle" ]]
+}
+
+@test "Notification after Stop does not re-block session" {
+    insert_session "s1" "working" "%1"
+    _hook_stop "s1" '{}'
+    [[ "$(get_status s1)" == "idle" ]]
+    _hook_notification "s1" '{}'
+    [[ "$(get_status s1)" == "idle" ]]
+    _render_cache
+    [[ "$(cat "$CACHE")" == *"1."* ]]
+    [[ "$(cat "$CACHE")" == *"0!"* ]]
 }
 
 @test "Notification does not reset blocked timer" {

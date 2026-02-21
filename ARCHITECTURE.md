@@ -50,7 +50,7 @@ Transition guards:
 - `Stop` -> idle (unconditional)
 - `UserPromptSubmit` -> working (unconditional, handles idle->working and blocked->working)
 - `PostToolUse` -> working (`WHERE status!='working'`, no-op when already working)
-- `Notification` -> blocked (`WHERE status != 'blocked'`, no-op if already blocked)
+- `Notification` -> blocked (`WHERE status = 'working'`, only from working state)
 
 ## Hook Performance
 
