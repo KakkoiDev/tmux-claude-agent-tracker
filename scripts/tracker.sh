@@ -193,7 +193,7 @@ _hook_stop() {
     local pane="${TMUX_PANE:-}"
     local is_active=""
     if [[ -n "$pane" ]]; then
-        is_active=$(tmux display-message -t "$pane" -p '#{pane_active}' 2>/dev/null || true)
+        is_active=$(tmux display-message -t "$pane" -p '#{&&:#{pane_active},#{window_active}}' 2>/dev/null || true)
     fi
     if [[ "$is_active" == "1" ]]; then
         sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
