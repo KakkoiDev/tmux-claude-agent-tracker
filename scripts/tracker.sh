@@ -27,8 +27,8 @@ _RENDER_SQL="SELECT
     COALESCE(SUM(CASE WHEN status='working' THEN 1 ELSE 0 END),0) || '|' ||
     COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END),0) || '|' ||
     COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0) || '|' ||
-    COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked' AND (agent_type IS NULL OR agent_type='')),0)
-    FROM sessions WHERE (agent_type IS NULL OR agent_type='')"
+    COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked'),0)
+    FROM sessions"
 
 _play_sound() {
     case "$(uname)" in
@@ -79,25 +79,24 @@ cmd_hook() {
     [[ -z "$sid" ]] && return 0
     sid=$(sql_esc "$sid")
 
-    # _ensure_session only for hooks that may create sessions.
+    # _ensure_session only for session-creating hooks.
     # Hot-path hooks (PostToolUse, PostToolUseFailure, Notification, Stop, TeammateIdle) skip this
     # — their UPDATEs are no-ops if session doesn't exist yet.
+    # SessionStart creates as idle; UserPromptSubmit creates as working.
     case "$event" in
-        SessionStart|UserPromptSubmit|SubagentStart)
-            _ensure_session "$sid" "$json" ;;
+        SessionStart)     _ensure_session "$sid" "$json" "idle" ;;
+        UserPromptSubmit) _ensure_session "$sid" "$json" "working" ;;
     esac
 
     local __changed=1 __render="" __json="$json"
     case "$event" in
-        SessionStart)     _hook_session_start "$sid" "$json" ;;
+        SessionStart)     ;; # _ensure_session already created as idle
         UserPromptSubmit) _hook_prompt "$sid" "$json" ;;
         PostToolUse)      _hook_post_tool "$sid" ;;
         PostToolUseFailure) _hook_post_tool "$sid" ;;
-        Stop)             _hook_stop "$sid" "$json" ;;
+        Stop)             _hook_stop "$sid" ;;
         Notification)     _hook_notification "$sid" ;;
         SessionEnd)       sql "DELETE FROM sessions WHERE session_id='$sid';" ;;
-        SubagentStart)    _hook_subagent_start "$sid" "$json" ;;
-        SubagentStop)     return 0 ;;  # cleanup deferred to _hook_stop
         TeammateIdle)     _hook_teammate_idle "$json" ;;
         *) return 0 ;;
     esac
@@ -125,7 +124,7 @@ cmd_hook() {
 }
 
 _ensure_session() {
-    local sid="$1" json="${2:-}"
+    local sid="$1" json="${2:-}" init_status="${3:-working}"
 
     # Fast path: session already registered with pane info — skip git/tmux overhead
     local existing
@@ -144,22 +143,20 @@ _ensure_session() {
             -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
     fi
 
-    # One Claude per pane — evict stale *main* sessions on the same pane.
-    # Preserve subagent entries (they have agent_type set) so idle counts stay accurate.
+    # One Claude per pane — evict stale sessions on the same pane.
     # Atomic: DELETE + INSERT in one sqlite3 process to prevent render seeing N-1 sessions.
     if [[ -n "$pane" ]]; then
-        sql "DELETE FROM sessions WHERE tmux_pane='$(sql_esc "$pane")' AND session_id!='$sid'
-             AND (agent_type IS NULL OR agent_type='');
+        sql "DELETE FROM sessions WHERE tmux_pane='$(sql_esc "$pane")' AND session_id!='$sid';
              INSERT OR IGNORE INTO sessions
              (session_id, status, cwd, project_name, git_branch, tmux_pane, tmux_target)
-             VALUES ('$sid', 'working',
+             VALUES ('$sid', '$init_status',
                      '$(sql_esc "$cwd")', '$(sql_esc "$project")',
                      '$(sql_esc "$branch")', '$(sql_esc "$pane")',
                      '$(sql_esc "$target")');"
     else
         sql "INSERT OR IGNORE INTO sessions
              (session_id, status, cwd, project_name, git_branch, tmux_pane, tmux_target)
-             VALUES ('$sid', 'working',
+             VALUES ('$sid', '$init_status',
                      '$(sql_esc "$cwd")', '$(sql_esc "$project")',
                      '$(sql_esc "$branch")', '', '');"
     fi
@@ -170,19 +167,6 @@ _ensure_session() {
              tmux_target='$(sql_esc "$target")'
              WHERE session_id='$sid' AND (tmux_pane IS NULL OR tmux_pane='');"
     fi
-}
-
-_hook_session_start() {
-    local sid="$1" json="$2"
-    # _ensure_session already created the row if missing.
-    # Only set idle for genuinely new sessions (never received any other hook).
-    # Guard: updated_at = started_at means the row was just created by _ensure_session.
-    local c
-    c=$(sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
-         WHERE session_id='$sid' AND status='working'
-         AND updated_at = started_at;
-         SELECT changes();")
-    if [[ "$c" == "0" ]]; then __changed=0; fi
 }
 
 _hook_prompt() {
@@ -201,72 +185,26 @@ _hook_post_tool() {
 }
 
 _hook_stop() {
-    local sid="$1" json="$2"
-    # Atomic: clean up subagent sessions on same pane + set idle.
-    # Prevents idle count flicker between SubagentStop and Stop.
-    sql "DELETE FROM sessions
-         WHERE tmux_pane != '' AND tmux_pane IS NOT NULL
-           AND tmux_pane = (SELECT tmux_pane FROM sessions WHERE session_id='$sid')
-           AND agent_type IS NOT NULL AND agent_type != '';
-         UPDATE sessions SET status='idle', updated_at=unixepoch()
+    local sid="$1"
+    sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
          WHERE session_id='$sid';"
 }
 
 # Hot path: UPDATE + render in one sqlite3 call
-# Only permission_prompt should set blocked. Other notification types
-# (idle_prompt, auth_success, elicitation_dialog) are not permission waits.
-# The hook config matcher should filter to permission_prompt, but we guard here too.
+# Only permission_prompt and elicitation_dialog should set blocked.
+# Other notification types (idle_prompt, auth_success) are not permission waits.
+# The hook config matcher should filter to these, but we guard here too.
 _hook_notification() {
     local sid="$1"
     local ntype
     ntype=$(_json_val "$__json" "notification_type")
-    if [[ -n "$ntype" && "$ntype" != "permission_prompt" ]]; then
+    if [[ -n "$ntype" && "$ntype" != "permission_prompt" && "$ntype" != "elicitation_dialog" ]]; then
         __changed=0; return 0
     fi
     __render=$(sql "UPDATE sessions SET status='blocked', updated_at=unixepoch()
          WHERE session_id='$sid' AND status = 'working';
          SELECT CASE WHEN changes() = 0 THEN '' ELSE ($_RENDER_SQL) END;")
     if [[ -z "$__render" ]]; then __changed=0; fi
-}
-
-_hook_subagent_start() {
-    local sid="$1" json="$2"
-    local sub_id cwd project branch atype pane target
-
-    sub_id=$(_json_val "$json" "subagent_id")
-    [[ -z "$sub_id" ]] && sub_id="$sid"
-    sub_id=$(sql_esc "$sub_id")
-
-    cwd=$(_json_val "$json" "cwd")
-    [[ -z "$cwd" ]] && cwd="${PWD}"
-    project=$(basename "$cwd")
-    branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-    atype=$(_json_val "$json" "subagent_type")
-    [[ -z "$atype" ]] && atype="subagent"
-
-    pane="${TMUX_PANE:-}"
-    target=""
-    if [[ -n "$pane" ]]; then
-        target=$(tmux display-message -t "$pane" \
-            -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
-    fi
-
-    sql "INSERT OR REPLACE INTO sessions
-         (session_id, status, cwd, project_name, git_branch, agent_type, tmux_pane, tmux_target)
-         VALUES ('$sub_id', 'working',
-                 '$(sql_esc "$cwd")', '$(sql_esc "$project")',
-                 '$(sql_esc "$branch")', '$(sql_esc "$atype")',
-                 '$(sql_esc "$pane")', '$(sql_esc "$target")');"
-}
-
-_hook_subagent_stop() {
-    local json="$1"
-    local sub_id
-    sub_id=$(_json_val "$json" "subagent_id")
-    [[ -z "$sub_id" ]] && sub_id=$(_json_val "$json" "session_id")
-    [[ -z "$sub_id" ]] && return 0
-    sub_id=$(sql_esc "$sub_id")
-    sql "DELETE FROM sessions WHERE session_id='$sub_id';"
 }
 
 _hook_teammate_idle() {
@@ -336,14 +274,13 @@ _render_cache() {
         COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END),0),
         COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0),
         COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions
-                  WHERE status='blocked' AND (agent_type IS NULL OR agent_type='')),0)
-        FROM sessions WHERE (agent_type IS NULL OR agent_type='');") || return 0
+                  WHERE status='blocked'),0)
+        FROM sessions;") || return 0
     [[ -z "$counts" ]] && counts="0|0|0|0"
 
     local project=""
     if [[ "${SHOW_PROJECT:-0}" == "1" ]]; then
         project=$(sql "SELECT project_name FROM sessions
-                       WHERE (agent_type IS NULL OR agent_type='')
                        ORDER BY CASE WHEN status='blocked' THEN 0 ELSE 1 END,
                                 updated_at DESC LIMIT 1;" 2>/dev/null || true)
     fi

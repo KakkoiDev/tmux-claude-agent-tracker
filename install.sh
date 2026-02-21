@@ -47,10 +47,9 @@ fi
 TRACKER_EVENTS=(
     SessionStart SessionEnd UserPromptSubmit
     PostToolUse PostToolUseFailure Stop Notification
-    SubagentStart SubagentStop
 )
-# Notification must match only permission_prompt (other types are not permission waits)
-TRACKER_MATCHERS=([Notification]="permission_prompt")
+# Notification must match only permission_prompt or elicitation_dialog (user attention needed)
+TRACKER_MATCHERS=([Notification]="permission_prompt|elicitation_dialog")
 
 install_hooks() {
     if [[ ! -f "$CLAUDE_SETTINGS" ]]; then

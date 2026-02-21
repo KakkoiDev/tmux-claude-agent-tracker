@@ -40,13 +40,13 @@ Cache file write uses `mv -f` for atomicity. The tmux option is the primary disp
 
 ```mermaid
 stateDiagram-v2
-    [*] --> working : SessionStart
-
-    working --> idle : Stop
-    working --> blocked : Notification (permission)
+    [*] --> idle : SessionStart
 
     idle --> working : UserPromptSubmit / PostToolUse
-    blocked --> working : UserPromptSubmit / PostToolUse
+    working --> idle : Stop
+    working --> blocked : Notification (permission/elicitation)
+
+    blocked --> working : UserPromptSubmit / PostToolUse / PostToolUseFailure
 
     idle --> [*] : SessionEnd
     blocked --> [*] : SessionEnd
@@ -54,10 +54,11 @@ stateDiagram-v2
 ```
 
 Transition guards:
+- `SessionStart` -> idle (INSERT OR IGNORE, no-op if session exists)
 - `Stop` -> idle (unconditional)
 - `UserPromptSubmit` -> working (unconditional, handles idle->working and blocked->working)
-- `PostToolUse` -> working (`WHERE status!='working'`, no-op when already working)
-- `Notification` -> blocked (`WHERE status = 'working'`, only from working state)
+- `PostToolUse` / `PostToolUseFailure` -> working (`WHERE status!='working'`, no-op when already working)
+- `Notification` -> blocked (`WHERE status = 'working'`, only from working state; `permission_prompt` or `elicitation_dialog` only)
 
 ## Hook Performance
 
@@ -115,7 +116,7 @@ The plugin sets `status-interval` to `@claude-tracker-status-interval` (default 
 
 ## Self-Healing (_ensure_session)
 
-Called for session-creating hooks (SessionStart, UserPromptSubmit, SubagentStart). Registers the session if missing, backfills tmux pane data if incomplete.
+Called for session-creating hooks (SessionStart, UserPromptSubmit). Registers the session if missing, backfills tmux pane data if incomplete. Accepts an initial status parameter: SessionStart creates as `idle`, UserPromptSubmit creates as `working`.
 
 Hot-path hooks (PostToolUse, Notification, Stop, TeammateIdle) skip this — their UPDATEs are safe no-ops if the session doesn't exist yet.
 
@@ -142,10 +143,6 @@ Multiple concurrent hook processes. WAL mode handles this:
 - **busy_timeout=100ms**: concurrent writes wait instead of failing
 - Each `sqlite3` invocation is a new connection
 
-## Subagent Tracking
-
-`_ensure_session` evicts stale main sessions per pane but preserves subagent entries (`agent_type IS NOT NULL`). One main session per pane, N subagents.
-
 ## Scan (Fallback Discovery)
 
 `cmd_scan` finds Claude processes via `pgrep` in tmux panes. Conditional INSERT skips panes already tracked by hooks. Throttled to once per 30s.
@@ -154,15 +151,13 @@ Multiple concurrent hook processes. WAL mode handles this:
 
 | Hook | Transition | Guard |
 |------|-----------|-------|
-| SessionStart | (new) -> working | INSERT OR REPLACE |
+| SessionStart | (new) -> idle | INSERT OR IGNORE (no-op if session exists) |
 | UserPromptSubmit | any -> working | unconditional |
 | PostToolUse | blocked/idle -> working | `status!='working'` |
 | PostToolUseFailure | blocked/idle -> working | `status!='working'` (catches rejected tools / interrupts) |
 | Stop | any -> idle | unconditional (does NOT fire on user interrupt) |
-| Notification | working -> blocked | `status='working'`, `notification_type='permission_prompt'` only |
+| Notification | working -> blocked | `status='working'`, `permission_prompt` or `elicitation_dialog` only |
 | SessionEnd | any -> (deleted) | unconditional |
-| SubagentStart | (new) -> working | INSERT OR REPLACE |
-| SubagentStop | any -> (deleted) | unconditional |
 | TeammateIdle | any -> idle | unconditional |
 
 ## Database Schema

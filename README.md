@@ -71,9 +71,7 @@ cd ~/.tmux/plugins/tmux-claude-agent-tracker
     "PostToolUse": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook PostToolUse" }] }],
     "PostToolUseFailure": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook PostToolUseFailure" }] }],
     "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Stop" }] }],
-    "Notification": [{ "matcher": "permission_prompt", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Notification" }] }],
-    "SubagentStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook SubagentStart" }] }],
-    "SubagentStop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook SubagentStop" }] }]
+    "Notification": [{ "matcher": "permission_prompt|elicitation_dialog", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Notification" }] }]
   }
 }
 ```
@@ -82,19 +80,17 @@ cd ~/.tmux/plugins/tmux-claude-agent-tracker
 
 | Hook | Fires when | Tracker action |
 |------|-----------|----------------|
-| `SessionStart` | Session begins or resumes | Create session row, set idle |
+| `SessionStart` | Session begins or resumes | Create session row as idle |
 | `UserPromptSubmit` | User sends a message | Set working |
 | `PostToolUse` | Tool call succeeds | Set working (no-op if already) |
 | `PostToolUseFailure` | Tool call fails or user rejects | Set working (clears stuck blocked state) |
-| `Notification` | Permission prompt shown | Set blocked (filtered to `permission_prompt` only) |
-| `Stop` | Claude finishes responding | Set idle, clean up subagents |
-| `SubagentStart` | Subagent spawned | Create subagent row |
-| `SubagentStop` | Subagent finishes | No-op (cleanup deferred to Stop) |
+| `Notification` | Permission prompt or elicitation dialog shown | Set blocked |
+| `Stop` | Claude finishes responding | Set idle |
 | `SessionEnd` | Session terminates | Delete session row |
 
 **Why `PostToolUseFailure`?** Claude Code's `Stop` hook does not fire on user interrupt. If a user rejects a permission prompt and interrupts, the session stays stuck at `blocked` with no hook to clear it. `PostToolUseFailure` fires on tool rejection/failure and transitions `blocked` back to `working`, where `_reap_dead` can clean up.
 
-**Why `permission_prompt` matcher on Notification?** The `Notification` hook fires for multiple types: `permission_prompt`, `idle_prompt`, `auth_success`, `elicitation_dialog`. Only `permission_prompt` means Claude is waiting for user input. Without the filter, an `idle_prompt` notification would incorrectly show the session as blocked.
+**Why `permission_prompt|elicitation_dialog` matcher on Notification?** The `Notification` hook fires for multiple types: `permission_prompt`, `elicitation_dialog`, `idle_prompt`, `auth_success`. Both `permission_prompt` and `elicitation_dialog` mean Claude is waiting for user input. Without the filter, an `idle_prompt` notification would incorrectly show the session as blocked.
 
 ### Requirements
 

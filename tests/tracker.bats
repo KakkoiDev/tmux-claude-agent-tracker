@@ -21,7 +21,7 @@ teardown() {
 
 @test "Stop sets status to idle" {
     insert_session "s1" "working" "%1"
-    _hook_stop "s1" '{}'
+    _hook_stop "s1"
     [[ "$(get_status s1)" == "idle" ]]
 }
 
@@ -66,7 +66,7 @@ teardown() {
 
 @test "Notification after Stop does not re-block session" {
     insert_session "s1" "working" "%1"
-    _hook_stop "s1" '{}'
+    _hook_stop "s1"
     [[ "$(get_status s1)" == "idle" ]]
     _hook_notification "s1" '{}'
     [[ "$(get_status s1)" == "idle" ]]
@@ -114,7 +114,7 @@ teardown() {
 # ── Subagent preservation ────────────────────────────────────────────
 
 @test "_ensure_session evicts stale main session on same pane" {
-    insert_session "old-main" "idle" "%1" ""
+    insert_session "old-main" "idle" "%1"
     export TMUX_PANE="%1"
 
     # Mock tmux display-message
@@ -122,20 +122,6 @@ teardown() {
 
     _ensure_session "new-main" '{"cwd":"/tmp/test"}'
     [[ "$(count_sessions)" -eq 1 ]]
-    [[ -z "$(get_status old-main)" ]]
-    [[ "$(get_status new-main)" == "working" ]]
-}
-
-@test "_ensure_session preserves subagent on same pane" {
-    insert_session "sub1" "working" "%1" "subagent"
-    insert_session "old-main" "idle" "%1" ""
-    export TMUX_PANE="%1"
-
-    tmux() { echo "test:0.0"; }
-
-    _ensure_session "new-main" '{"cwd":"/tmp/test"}'
-    # subagent preserved, old main evicted
-    [[ "$(get_status sub1)" == "working" ]]
     [[ -z "$(get_status old-main)" ]]
     [[ "$(get_status new-main)" == "working" ]]
 }
@@ -288,32 +274,6 @@ teardown() {
     [[ "$(get_status s1)" == "idle" ]]
 }
 
-# ── Subagent exclusion from counts ───────────────────────────────────
-
-@test "_render_cache excludes subagents from counts" {
-    insert_session "main1" "working" "%1" ""
-    insert_session "sub1" "working" "%1" "researcher"
-    insert_session "main2" "idle" "%2" ""
-    _render_cache
-    local out
-    out=$(cat "$CACHE")
-    # Should show 1 working, 1 idle (not 2 working)
-    [[ "$out" == *"1."* ]]
-    [[ "$out" == *"1*"* ]]
-}
-
-@test "blocked timer excludes subagent timestamps" {
-    insert_session "main1" "blocked" "%1" ""
-    sql "UPDATE sessions SET updated_at = unixepoch() - 300 WHERE session_id='main1';"
-    insert_session "sub1" "blocked" "%1" "subagent"
-    sql "UPDATE sessions SET updated_at = unixepoch() - 600 WHERE session_id='sub1';"
-    _render_cache
-    local out
-    out=$(cat "$CACHE")
-    # Timer should use main1's 5min, not sub1's 10min
-    [[ "$out" == *"1!5m"* ]]
-}
-
 # ── Cache rendering ──────────────────────────────────────────────────
 
 @test "_render_cache produces correct format with no blocked" {
@@ -460,7 +420,7 @@ teardown() {
     _render_cache
     [[ "$(cat "$CACHE")" == *"1!"* ]]
 
-    _hook_stop "s1" '{}'
+    _hook_stop "s1"
     _render_cache
     local after
     after=$(cat "$CACHE")
@@ -498,7 +458,7 @@ teardown() {
     [[ "$(cat "$CACHE")" == *"0!"* ]]
 
     # Stop -> idle
-    _hook_stop "s1" '{}'
+    _hook_stop "s1"
     _render_cache
     [[ "$(cat "$CACHE")" == *"1."* ]]
     [[ "$(cat "$CACHE")" == *"0!"* ]]
@@ -541,57 +501,6 @@ teardown() {
     [[ "$out" == "$expected" ]]
 }
 
-# ── SubagentStart / SubagentStop ─────────────────────────────────────
-
-@test "SubagentStart creates working session with agent_type" {
-    _hook_subagent_start "parent" '{"subagent_id":"sub1","subagent_type":"researcher","cwd":"/tmp/test"}'
-    [[ "$(get_status sub1)" == "working" ]]
-    local atype
-    atype=$(sql "SELECT agent_type FROM sessions WHERE session_id='sub1';")
-    [[ "$atype" == "researcher" ]]
-}
-
-@test "Stop atomically cleans up subagents and sets idle" {
-    insert_session "main1" "working" "%1" ""
-    insert_session "sub1" "idle" "%1" "subagent"
-    insert_session "sub2" "working" "%1" "researcher"
-    insert_session "other" "idle" "%2" ""
-
-    _hook_stop "main1" '{}'
-
-    # main1 went idle, both subagents on %1 deleted, other untouched
-    [[ "$(get_status main1)" == "idle" ]]
-    [[ -z "$(get_status sub1)" ]]
-    [[ -z "$(get_status sub2)" ]]
-    [[ "$(get_status other)" == "idle" ]]
-    [[ "$(count_sessions)" -eq 2 ]]
-}
-
-@test "idle count stays stable through subagent lifecycle" {
-    # 3 idle agents + 1 working with a subagent
-    insert_session "s1" "idle" "%1" ""
-    insert_session "s2" "idle" "%2" ""
-    insert_session "s3" "idle" "%3" ""
-    insert_session "main" "working" "%4" ""
-    insert_session "sub" "idle" "%4" "subagent"
-
-    # SubagentStop is a no-op (deferred to Stop)
-    # Simulate: PostToolUse fires, then Stop
-    _hook_post_tool "main" '{}'
-    _render_cache
-    local mid_count
-    mid_count=$(sql "SELECT COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0) FROM sessions;")
-    # sub still idle + 3 others = 4 idle (no drop)
-    [[ "$mid_count" -eq 4 ]]
-
-    _hook_stop "main" '{}'
-    _render_cache
-    local final_count
-    final_count=$(sql "SELECT COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0) FROM sessions;")
-    # sub deleted, main idle + 3 others = 4 idle
-    [[ "$final_count" -eq 4 ]]
-}
-
 # ── sql_esc ──────────────────────────────────────────────────────────
 
 @test "sql_esc escapes single quotes" {
@@ -611,19 +520,13 @@ teardown() {
 
 # ── Idle count stability (no flicker) ──────────────────────────────
 
-@test "SessionStart does not reset working session to idle" {
+@test "SessionStart on existing working session is no-op" {
     insert_session "s1" "working" "%1"
-    # Simulate time passing so updated_at != started_at
-    sql "UPDATE sessions SET updated_at = unixepoch() + 5 WHERE session_id='s1';"
-    _hook_session_start "s1" '{}'
+    export TMUX_PANE="%1"
+    tmux() { echo "test:0.0"; }
+    _ensure_session "s1" '{"cwd":"/tmp/test"}' "idle"
+    # Fast path: session exists with pane info, no change
     [[ "$(get_status s1)" == "working" ]]
-}
-
-@test "SessionStart sets idle only for freshly created sessions" {
-    insert_session "s1" "working" "%1"
-    # Fresh session: updated_at == started_at (default from insert)
-    _hook_session_start "s1" '{}'
-    [[ "$(get_status s1)" == "idle" ]]
 }
 
 # ── _json_val ────────────────────────────────────────────────────────
@@ -753,8 +656,8 @@ teardown() {
 }
 
 @test "atomic eviction keeps count stable during pane takeover" {
-    insert_session "old" "idle" "%1" ""
-    insert_session "other" "idle" "%2" ""
+    insert_session "old" "idle" "%1"
+    insert_session "other" "idle" "%2"
     export TMUX_PANE="%1"
     tmux() { echo "test:0.0"; }
 
@@ -765,4 +668,116 @@ teardown() {
     [[ -z "$(get_status old)" ]]
     [[ "$(get_status new)" == "working" ]]
     [[ "$(get_status other)" == "idle" ]]
+}
+
+# ── Integration tests (full cmd_hook pipeline via stdin) ──────────────
+
+# Mock that handles all tmux subcommands correctly for integration tests.
+# _reap_dead calls list-panes and pgrep, so we need both.
+_integration_mock() {
+    local pane="${1:-%1}"
+    export TMUX_PANE="$pane"
+    tmux() {
+        case "$1" in
+            display-message) echo "test:0.0" ;;
+            list-panes) echo "$TMUX_PANE 1234" ;;
+            *) true ;;
+        esac
+    }
+    pgrep() { return 0; }
+}
+
+@test "integration: SessionStart creates idle session" {
+    _integration_mock "%1"
+    echo '{"session_id":"s1","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
+    [[ "$(get_status s1)" == "idle" ]]
+}
+
+@test "integration: SessionStart then UserPromptSubmit sets working" {
+    _integration_mock "%1"
+    echo '{"session_id":"s1","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
+    [[ "$(get_status s1)" == "idle" ]]
+    echo '{"session_id":"s1"}' | cmd_hook "UserPromptSubmit"
+    [[ "$(get_status s1)" == "working" ]]
+}
+
+@test "integration: full lifecycle Start -> Prompt -> PostToolUse -> Stop -> End" {
+    _integration_mock "%1"
+    echo '{"session_id":"s1","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
+    [[ "$(get_status s1)" == "idle" ]]
+
+    echo '{"session_id":"s1"}' | cmd_hook "UserPromptSubmit"
+    [[ "$(get_status s1)" == "working" ]]
+
+    echo '{"session_id":"s1","tool_name":"Read"}' | cmd_hook "PostToolUse"
+    [[ "$(get_status s1)" == "working" ]]
+
+    echo '{"session_id":"s1"}' | cmd_hook "Stop"
+    [[ "$(get_status s1)" == "idle" ]]
+
+    echo '{"session_id":"s1"}' | cmd_hook "SessionEnd"
+    [[ "$(count_sessions)" -eq 0 ]]
+}
+
+@test "integration: Notification permission_prompt sets blocked" {
+    insert_session "s1" "working" "%1"
+    echo '{"session_id":"s1","notification_type":"permission_prompt"}' | cmd_hook "Notification"
+    [[ "$(get_status s1)" == "blocked" ]]
+}
+
+@test "integration: Notification elicitation_dialog sets blocked" {
+    insert_session "s1" "working" "%1"
+    echo '{"session_id":"s1","notification_type":"elicitation_dialog"}' | cmd_hook "Notification"
+    [[ "$(get_status s1)" == "blocked" ]]
+}
+
+@test "integration: blocked then PostToolUse sets working" {
+    insert_session "s1" "blocked" "%1"
+    echo '{"session_id":"s1","tool_name":"Read"}' | cmd_hook "PostToolUse"
+    [[ "$(get_status s1)" == "working" ]]
+}
+
+@test "integration: blocked then PostToolUseFailure sets working" {
+    insert_session "s1" "blocked" "%1"
+    echo '{"session_id":"s1","tool_name":"Bash"}' | cmd_hook "PostToolUseFailure"
+    [[ "$(get_status s1)" == "working" ]]
+}
+
+@test "integration: blocked then UserPromptSubmit sets working" {
+    _integration_mock "%1"
+    insert_session "s1" "blocked" "%1"
+    echo '{"session_id":"s1"}' | cmd_hook "UserPromptSubmit"
+    [[ "$(get_status s1)" == "working" ]]
+}
+
+@test "integration: Notification idle_prompt does not block" {
+    insert_session "s1" "working" "%1"
+    echo '{"session_id":"s1","notification_type":"idle_prompt"}' | cmd_hook "Notification"
+    [[ "$(get_status s1)" == "working" ]]
+}
+
+@test "integration: repeated Notification does not reset timer" {
+    insert_session "s1" "blocked" "%1"
+    sql "UPDATE sessions SET updated_at = unixepoch() - 300 WHERE session_id='s1';"
+    local before
+    before=$(sql "SELECT updated_at FROM sessions WHERE session_id='s1';")
+    echo '{"session_id":"s1","notification_type":"permission_prompt"}' | cmd_hook "Notification"
+    local after
+    after=$(sql "SELECT updated_at FROM sessions WHERE session_id='s1';")
+    [[ "$before" == "$after" ]]
+}
+
+@test "integration: SessionStart on existing working session is no-op" {
+    _integration_mock "%1"
+    insert_session "s1" "working" "%1"
+    echo '{"session_id":"s1","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
+    [[ "$(get_status s1)" == "working" ]]
+}
+
+@test "integration: pane takeover evicts old session" {
+    _integration_mock "%1"
+    insert_session "old" "idle" "%1"
+    echo '{"session_id":"new","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
+    [[ -z "$(get_status old)" ]]
+    [[ "$(get_status new)" == "idle" ]]
 }

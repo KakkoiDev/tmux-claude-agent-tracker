@@ -48,10 +48,10 @@ sql() { printf '.timeout 100\n%s\n' "$*" | sqlite3 "$DB"; }
 
 # Insert a session row directly
 insert_session() {
-    local sid="$1" status="${2:-working}" pane="${3:-}" agent_type="${4:-}"
-    local updated="${5:-}"
-    sql "INSERT INTO sessions (session_id, status, cwd, project_name, tmux_pane, agent_type)
-         VALUES ('$sid', '$status', '/tmp/test', 'test', '$pane', '$agent_type');"
+    local sid="$1" status="${2:-working}" pane="${3:-}"
+    local updated="${4:-}"
+    sql "INSERT INTO sessions (session_id, status, cwd, project_name, tmux_pane)
+         VALUES ('$sid', '$status', '/tmp/test', 'test', '$pane');"
     if [[ -n "$updated" ]]; then
         sql "UPDATE sessions SET updated_at=$updated WHERE session_id='$sid';"
     fi
