@@ -30,10 +30,10 @@ Quit      q
 
 ## How It Works
 
-- Claude Code hooks fire on session events (start, stop, tool use, permission request)
-- Each hook writes to a local SQLite database (~25ms)
-- A pre-rendered cache file is updated and tmux refreshes
-- Status bar reads the cache file (sub-millisecond)
+- Claude Code hooks fire on session events (start, stop, tool use, permission, failure)
+- Each hook writes to a local SQLite database and pushes to a tmux option (~35ms)
+- `refresh-client -S` triggers instant display via `#{@claude-tracker-status}`
+- A periodic `#()` refresh keeps the blocked timer current
 - Dead sessions are automatically reaped via tmux pane cross-referencing
 
 No background daemon. No polling. Pure event-driven tracking.
@@ -69,13 +69,32 @@ cd ~/.tmux/plugins/tmux-claude-agent-tracker
     "SessionEnd": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook SessionEnd" }] }],
     "UserPromptSubmit": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook UserPromptSubmit" }] }],
     "PostToolUse": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook PostToolUse" }] }],
+    "PostToolUseFailure": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook PostToolUseFailure" }] }],
     "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Stop" }] }],
-    "Notification": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Notification" }] }],
+    "Notification": [{ "matcher": "permission_prompt", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Notification" }] }],
     "SubagentStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook SubagentStart" }] }],
     "SubagentStop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook SubagentStop" }] }]
   }
 }
 ```
+
+### Hook Reference
+
+| Hook | Fires when | Tracker action |
+|------|-----------|----------------|
+| `SessionStart` | Session begins or resumes | Create session row, set idle |
+| `UserPromptSubmit` | User sends a message | Set working |
+| `PostToolUse` | Tool call succeeds | Set working (no-op if already) |
+| `PostToolUseFailure` | Tool call fails or user rejects | Set working (clears stuck blocked state) |
+| `Notification` | Permission prompt shown | Set blocked (filtered to `permission_prompt` only) |
+| `Stop` | Claude finishes responding | Set idle, clean up subagents |
+| `SubagentStart` | Subagent spawned | Create subagent row |
+| `SubagentStop` | Subagent finishes | No-op (cleanup deferred to Stop) |
+| `SessionEnd` | Session terminates | Delete session row |
+
+**Why `PostToolUseFailure`?** Claude Code's `Stop` hook does not fire on user interrupt. If a user rejects a permission prompt and interrupts, the session stays stuck at `blocked` with no hook to clear it. `PostToolUseFailure` fires on tool rejection/failure and transitions `blocked` back to `working`, where `_reap_dead` can clean up.
+
+**Why `permission_prompt` matcher on Notification?** The `Notification` hook fires for multiple types: `permission_prompt`, `idle_prompt`, `auth_success`, `elicitation_dialog`. Only `permission_prompt` means Claude is waiting for user input. Without the filter, an `idle_prompt` notification would incorrectly show the session as blocked.
 
 ### Requirements
 
@@ -98,7 +117,8 @@ Set in `~/.tmux.conf`:
 | `@claude-tracker-color-blocked` | `black` | Blocked count color |
 | `@claude-tracker-color-idle` | `black` | Idle count color |
 | `@claude-tracker-sound` | `0` | `1` to play sound on block |
-| `@claude-tracker-status-interval` | `2` | Status refresh (seconds) |
+| `@claude-tracker-status-interval` | `5` | Blocked timer refresh (seconds) |
+| `@claude-tracker-show-project` | `0` | `1` to show project name |
 
 ```bash
 set -g @claude-tracker-color-working 'green'
@@ -112,7 +132,8 @@ set -g @claude-tracker-color-idle 'yellow'
 |---------|---------|
 | `tmux-claude-agent-tracker init` | Create DB |
 | `tmux-claude-agent-tracker hook <event>` | Handle Claude hook (stdin JSON) |
-| `tmux-claude-agent-tracker status-bar` | Output status string |
+| `tmux-claude-agent-tracker status-bar` | Output cached status string |
+| `tmux-claude-agent-tracker refresh` | Re-render from DB, update tmux option (no output) |
 | `tmux-claude-agent-tracker menu [page]` | Show agent menu |
 | `tmux-claude-agent-tracker goto <target>` | Jump to pane |
 | `tmux-claude-agent-tracker cleanup` | Remove stale sessions |

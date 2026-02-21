@@ -46,9 +46,11 @@ fi
 
 TRACKER_EVENTS=(
     SessionStart SessionEnd UserPromptSubmit
-    PostToolUse Stop Notification
+    PostToolUse PostToolUseFailure Stop Notification
     SubagentStart SubagentStop
 )
+# Notification must match only permission_prompt (other types are not permission waits)
+TRACKER_MATCHERS=([Notification]="permission_prompt")
 
 install_hooks() {
     if [[ ! -f "$CLAUDE_SETTINGS" ]]; then
@@ -58,7 +60,8 @@ install_hooks() {
         for event in "${TRACKER_EVENTS[@]}"; do
             $first || hooks_json+=","
             first=false
-            hooks_json+="\"$event\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"tmux-claude-agent-tracker hook $event\"}]}]"
+            local matcher="${TRACKER_MATCHERS[$event]:-}"
+            hooks_json+="\"$event\":[{\"matcher\":\"$matcher\",\"hooks\":[{\"type\":\"command\",\"command\":\"tmux-claude-agent-tracker hook $event\"}]}]"
         done
         hooks_json+="}"
 
@@ -92,9 +95,10 @@ install_hooks() {
         fi
 
         # Append tracker hook entry to this event
-        jq --arg event "$event" --arg cmd "$cmd" '
+        local matcher="${TRACKER_MATCHERS[$event]:-}"
+        jq --arg event "$event" --arg cmd "$cmd" --arg matcher "$matcher" '
             .hooks[$event] = (.hooks[$event] // []) + [{
-                matcher: "",
+                matcher: $matcher,
                 hooks: [{type: "command", command: $cmd}]
             }]
         ' "$tmp" > "${tmp}.2" && mv "${tmp}.2" "$tmp"
