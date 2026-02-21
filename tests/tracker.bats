@@ -48,43 +48,6 @@ teardown() {
     [[ "$before" == "$after" ]]
 }
 
-@test "Stop on viewed pane sets idle instead of completed" {
-    insert_session "s1" "working" "%1"
-    export TMUX_PANE="%1"
-    # Mock: client's active pane matches this pane
-    tmux() {
-        if [[ "${1:-}" == "display-message" && "$*" == *"pane_id"* ]]; then
-            echo "%1"
-            return 0
-        fi
-        return 0
-    }
-    _hook_stop "s1"
-    [[ "$(get_status s1)" == "idle" ]]
-}
-
-@test "Stop on non-viewed pane sets completed" {
-    insert_session "s1" "working" "%1"
-    export TMUX_PANE="%1"
-    # Mock: client's active pane is a different pane
-    tmux() {
-        if [[ "${1:-}" == "display-message" && "$*" == *"pane_id"* ]]; then
-            echo "%5"
-            return 0
-        fi
-        return 0
-    }
-    _hook_stop "s1"
-    [[ "$(get_status s1)" == "completed" ]]
-}
-
-@test "Stop without TMUX_PANE sets completed" {
-    insert_session "s1" "working" "%1"
-    export TMUX_PANE=""
-    _hook_stop "s1"
-    [[ "$(get_status s1)" == "completed" ]]
-}
-
 @test "Notification sets working to blocked" {
     insert_session "s1" "working" "%1"
     _hook_notification "s1" '{}'

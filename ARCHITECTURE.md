@@ -43,13 +43,11 @@ stateDiagram-v2
     [*] --> idle : SessionStart
 
     idle --> working : UserPromptSubmit / PostToolUse
-    working --> completed : Stop (not viewing pane)
-    working --> idle : Stop (viewing pane)
+    working --> completed : Stop
     working --> blocked : Notification (permission/elicitation)
 
     blocked --> working : UserPromptSubmit / PostToolUse / PostToolUseFailure
-    blocked --> completed : Stop (not viewing pane)
-    blocked --> idle : Stop (viewing pane)
+    blocked --> completed : Stop
 
     completed --> idle : goto / navigation hooks
     completed --> working : UserPromptSubmit / PostToolUse
@@ -62,7 +60,7 @@ stateDiagram-v2
 
 Transition guards:
 - `SessionStart` -> idle (INSERT OR IGNORE, no-op if session exists)
-- `Stop` -> completed or idle (`WHERE status IN ('working', 'blocked')`, no-op on idle/completed; compares `$TMUX_PANE` with client's active `#{pane_id}` — idle if user is viewing, completed otherwise)
+- `Stop` -> completed (`WHERE status IN ('working', 'blocked')`, no-op on idle/completed)
 - `UserPromptSubmit` -> working (unconditional, handles idle/completed/blocked->working)
 - `PostToolUse` / `PostToolUseFailure` -> working (`WHERE status!='working'`, no-op when already working)
 - `Notification` -> blocked (`WHERE status = 'working'`, only from working state; `permission_prompt` or `elicitation_dialog` only)
@@ -164,7 +162,7 @@ Multiple concurrent hook processes. WAL mode handles this:
 | UserPromptSubmit | any -> working | unconditional |
 | PostToolUse | blocked/idle/completed -> working | `status!='working'` |
 | PostToolUseFailure | blocked/idle/completed -> working | `status!='working'` (catches rejected tools / interrupts) |
-| Stop | working/blocked -> completed | `status IN ('working', 'blocked')` (does NOT fire on user interrupt) |
+| Stop | working/blocked -> completed | `status IN ('working', 'blocked')` |
 | session-window-changed / window-pane-changed / client-session-changed | completed -> idle | `status='completed'` AND `tmux_pane` matches focused pane |
 | Notification | working -> blocked | `status='working'`, `permission_prompt` or `elicitation_dialog` only |
 | SessionEnd | any -> (deleted) | unconditional |
