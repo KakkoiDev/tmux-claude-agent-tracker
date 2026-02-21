@@ -117,7 +117,7 @@ Handles: missed SessionStart, lost tracking, missing tmux info.
 Sessions can leak (crashes, killed panes). Three cleanup mechanisms:
 
 1. **SessionEnd hook** (normal exit)
-2. **`_reap_dead`** (status-bar path): cross-references `tmux list-panes` with stored pane IDs, deletes dead ones
+2. **`_reap_dead`** (hook path, throttled to 30s): cross-references `tmux list-panes` with stored pane IDs, deletes dead ones
 3. **`cmd_cleanup`** (manual): deletes sessions older than 24h + dead pane check
 
 `_reap_dead` checks pane liveness via `tmux list-panes` and process inspection via `pgrep`. Working/blocked sessions on live panes without a claude child process are cleaned up (Ctrl+C case).

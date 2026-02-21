@@ -403,6 +403,15 @@ cmd_menu() {
 _reap_dead() {
     [[ -f "$DB" ]] || return 0
 
+    local stamp="$TRACKER_DIR/.last_reap"
+    if [[ -f "$stamp" ]]; then
+        local now age
+        now=$(date +%s)
+        age=$(( now - $(_file_mtime "$stamp" 2>/dev/null || echo 0) ))
+        [[ "$age" -lt 30 ]] && return 0
+    fi
+    touch "$stamp"
+
     local pane_info
     pane_info=$(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null) || return 0
 

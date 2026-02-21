@@ -213,6 +213,28 @@ teardown() {
     [[ "$(get_status fresh-no-pane)" == "working" ]]
 }
 
+@test "_reap_dead throttle prevents second call within 30s" {
+    insert_session "s1" "working" "%99"
+
+    tmux() {
+        case "$1" in
+            list-panes) echo "%99 1234" ;;
+            *) true ;;
+        esac
+    }
+    pgrep() { return 0; }
+
+    _reap_dead
+    [[ -f "$TRACKER_DIR/.last_reap" ]]
+
+    # Insert a dead-pane session after first reap
+    insert_session "s2" "working" "%200"
+
+    # Second call within 30s should be throttled — s2 survives
+    _reap_dead
+    [[ "$(get_status s2)" == "working" ]]
+}
+
 @test "_reap_dead keeps idle sessions even without claude process" {
     insert_session "s1" "idle" "%10"
 

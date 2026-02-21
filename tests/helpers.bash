@@ -65,6 +65,13 @@ source_tracker_functions() {
     tmux() { true; }
     git() { true; }
     _play_sound() { true; }
+    # Platform helper needed by throttle logic
+    _file_mtime() {
+        case "$(uname)" in
+            Darwin) stat -f %m "$1" ;;
+            *)      stat -c %Y "$1" ;;
+        esac
+    }
 
     # Use awk to strip shebang, set -euo, source line, load_config, and case block
     # Then sed to override path variables with test paths
