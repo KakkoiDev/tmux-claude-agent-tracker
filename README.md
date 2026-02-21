@@ -15,7 +15,7 @@ Track [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agent sessio
 | `1+` | 1 completed (output ready) |
 | `1!3m` | 1 blocked for 3m (longest wait) |
 
-Completed (`+`) auto-clears to idle when you focus the pane. If you're already watching the pane when Claude finishes, it goes straight to idle.
+Completed (`+`) auto-clears to idle when you focus the pane.
 
 ## Menu
 
@@ -46,25 +46,48 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 ## Install
 
+### Requirements
+
+- `tmux 3.0+`
+- `sqlite3`
+- `jq` (optional -- enables automatic Claude Code hook configuration)
+
+### Quick Start
+
+```bash
+git clone https://github.com/KakkoiDev/tmux-claude-agent-tracker.git ~/.tmux/plugins/tmux-claude-agent-tracker
+cd ~/.tmux/plugins/tmux-claude-agent-tracker && ./install.sh
+```
+
+The install script:
+1. Symlinks the CLI to `~/.local/bin/`
+2. Initializes the SQLite database
+3. Adds the plugin to `~/.tmux.conf`
+4. Configures Claude Code hooks in `~/.claude/settings.json` (requires `jq`)
+
+If `jq` is not installed, the script prints the hook JSON for manual configuration.
+
 ### TPM
 
 ```bash
 set -g @plugin 'KakkoiDev/tmux-claude-agent-tracker'
 ```
 
-Then `prefix + I`.
-
-### Manual
+Then `prefix + I` to install. After TPM installs the plugin, run the hook installer:
 
 ```bash
-git clone https://github.com/KakkoiDev/tmux-claude-agent-tracker.git ~/.tmux/plugins/tmux-claude-agent-tracker
-cd ~/.tmux/plugins/tmux-claude-agent-tracker
-./install.sh
+~/.tmux/plugins/tmux-claude-agent-tracker/install.sh --hooks-only
 ```
 
 ### Claude Code Hooks
 
-`./install.sh` automatically adds the required hooks to `~/.claude/settings.json`. If you need to add them manually, add a hook entry for each event:
+`./install.sh` automatically adds the required hooks to `~/.claude/settings.json`. To re-run just the hook configuration:
+
+```bash
+./install.sh --hooks-only
+```
+
+If you need to add them manually:
 
 ```json
 {
@@ -96,35 +119,88 @@ cd ~/.tmux/plugins/tmux-claude-agent-tracker
 
 **Why `permission_prompt|elicitation_dialog` matcher on Notification?** The `Notification` hook fires for multiple types: `permission_prompt`, `elicitation_dialog`, `idle_prompt`, `auth_success`. Both `permission_prompt` and `elicitation_dialog` mean Claude is waiting for user input. Without the filter, an `idle_prompt` notification would incorrectly show the session as blocked.
 
-### Requirements
-
-- `tmux 3.0+`
-- `sqlite3`
-- `jq`
-
 ## Configuration
 
 Set in `~/.tmux.conf`:
 
+### Display
+
 | Option | Default | Purpose |
 |--------|---------|---------|
-| `@claude-tracker-keybinding` | `a` | Menu key |
+| `@claude-tracker-keybinding` | `a` | Menu key (after prefix) |
 | `@claude-tracker-items-per-page` | `10` | Menu page size |
 | `@claude-tracker-key-next` | `i` | Next page |
 | `@claude-tracker-key-prev` | `o` | Previous page |
 | `@claude-tracker-key-quit` | `q` | Quit menu |
+| `@claude-tracker-show-project` | `0` | `1` to show project name |
+| `@claude-tracker-status-interval` | `60` | Blocked timer refresh (seconds) |
+
+### Colors
+
+| Option | Default | Purpose |
+|--------|---------|---------|
 | `@claude-tracker-color-working` | `black` | Working count color |
 | `@claude-tracker-color-blocked` | `black` | Blocked count color |
 | `@claude-tracker-color-idle` | `black` | Idle count color |
 | `@claude-tracker-color-completed` | `black` | Completed count color |
-| `@claude-tracker-sound` | `0` | `1` to play sound on block |
-| `@claude-tracker-status-interval` | `5` | Blocked timer refresh (seconds) |
-| `@claude-tracker-show-project` | `0` | `1` to show project name |
 
 ```bash
 set -g @claude-tracker-color-working 'green'
 set -g @claude-tracker-color-blocked 'red'
 set -g @claude-tracker-color-idle 'yellow'
+```
+
+### Icons
+
+Customize the status bar indicators:
+
+| Option | Default | Purpose |
+|--------|---------|---------|
+| `@claude-tracker-icon-idle` | `.` | Idle indicator |
+| `@claude-tracker-icon-working` | `*` | Working indicator |
+| `@claude-tracker-icon-completed` | `+` | Completed indicator |
+| `@claude-tracker-icon-blocked` | `!` | Blocked indicator |
+
+```bash
+set -g @claude-tracker-icon-idle '💤'
+set -g @claude-tracker-icon-working '🔨'
+set -g @claude-tracker-icon-completed '✅'
+set -g @claude-tracker-icon-blocked '🔴'
+```
+
+### Sound
+
+| Option | Default | Purpose |
+|--------|---------|---------|
+| `@claude-tracker-sound` | `0` | `1` to play system sound on block |
+
+Sound is automatically disabled when `@claude-tracker-on-blocked` is set, since you handle notifications via the hook instead.
+
+### State Transition Hooks
+
+Run shell commands when an agent changes state. Each command receives 4 arguments: `$1=from_state $2=to_state $3=session_id $4=project_name`. Commands run asynchronously (backgrounded).
+
+| Option | Default | Fires on |
+|--------|---------|----------|
+| `@claude-tracker-on-working` | `""` | Any state -> working |
+| `@claude-tracker-on-completed` | `""` | Any state -> completed |
+| `@claude-tracker-on-blocked` | `""` | Any state -> blocked |
+| `@claude-tracker-on-idle` | `""` | Any state -> idle |
+| `@claude-tracker-on-transition` | `""` | Any state change (catch-all) |
+
+```bash
+set -g @claude-tracker-on-blocked 'notify-send "Claude blocked" "Agent in $4 needs attention"'
+set -g @claude-tracker-on-completed 'paplay /usr/share/sounds/complete.oga'
+```
+
+**Migrating from `@claude-tracker-sound`:** If you used `@claude-tracker-sound 1` for blocked notifications, switch to `@claude-tracker-on-blocked` for more control:
+
+```bash
+# Before
+set -g @claude-tracker-sound '1'
+
+# After
+set -g @claude-tracker-on-blocked 'paplay /usr/share/sounds/freedesktop/stereo/complete.oga'
 ```
 
 ## Commands

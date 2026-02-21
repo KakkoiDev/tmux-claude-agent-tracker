@@ -23,7 +23,7 @@ tmux set-hook -g client-session-changed "run-shell -b '$SCRIPTS_DIR/tracker.sh p
 
 # Set status-interval for periodic blocked timer refresh.
 # Only lower it — never override a user's custom short interval.
-tracker_interval=$(get_tmux_option "@claude-tracker-status-interval" "5")
+tracker_interval=$(get_tmux_option "@claude-tracker-status-interval" "60")
 current_interval=$(tmux show-option -gqv status-interval 2>/dev/null)
 current_interval="${current_interval:-15}"
 if [[ "$current_interval" -gt "$tracker_interval" ]]; then

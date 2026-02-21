@@ -5,11 +5,18 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN="$SCRIPT_DIR/bin/tmux-claude-agent-tracker"
 LINK="$HOME/.local/bin/tmux-claude-agent-tracker"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+HOOKS_ONLY=false
+
+for arg in "$@"; do
+    case "$arg" in
+        --hooks-only) HOOKS_ONLY=true ;;
+    esac
+done
 
 # ── dependency check ─────────────────────────────────────────────────
 
 missing=()
-for cmd in sqlite3 jq tmux; do
+for cmd in sqlite3 tmux; do
     command -v "$cmd" >/dev/null || missing+=("$cmd")
 done
 if [[ ${#missing[@]} -gt 0 ]]; then
@@ -17,6 +24,13 @@ if [[ ${#missing[@]} -gt 0 ]]; then
     echo "Install them and re-run." >&2
     exit 1
 fi
+
+HAS_JQ=false
+command -v jq >/dev/null && HAS_JQ=true
+
+# ── hooks-only mode: skip CLI/DB/tmux.conf ───────────────────────────
+
+if ! $HOOKS_ONLY; then
 
 # ── symlink CLI to PATH ─────────────────────────────────────────────
 
@@ -42,6 +56,8 @@ else
     echo "tmux.conf: already configured"
 fi
 
+fi  # end !HOOKS_ONLY
+
 # ── configure Claude Code hooks ──────────────────────────────────────
 
 TRACKER_EVENTS=(
@@ -51,7 +67,32 @@ TRACKER_EVENTS=(
 # Notification must match only permission_prompt or elicitation_dialog (user attention needed)
 TRACKER_MATCHERS=([Notification]="permission_prompt|elicitation_dialog")
 
+_print_manual_hooks() {
+    cat <<'MANUAL_HOOKS'
+
+Add the following to ~/.claude/settings.json under "hooks":
+
+{
+  "hooks": {
+    "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook SessionStart" }] }],
+    "SessionEnd": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook SessionEnd" }] }],
+    "UserPromptSubmit": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook UserPromptSubmit" }] }],
+    "PostToolUse": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook PostToolUse" }] }],
+    "PostToolUseFailure": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook PostToolUseFailure" }] }],
+    "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Stop" }] }],
+    "Notification": [{ "matcher": "permission_prompt|elicitation_dialog", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Notification" }] }]
+  }
+}
+MANUAL_HOOKS
+}
+
 install_hooks() {
+    if ! $HAS_JQ; then
+        echo "hooks: jq not found — skipping auto-configuration"
+        _print_manual_hooks
+        return
+    fi
+
     if [[ ! -f "$CLAUDE_SETTINGS" ]]; then
         # Create minimal settings with hooks
         local hooks_json="{"
@@ -118,5 +159,9 @@ install_hooks
 # ── done ─────────────────────────────────────────────────────────────
 
 echo ""
-echo "Done. Reload tmux: tmux source ~/.tmux.conf"
-echo "Then restart Claude Code for hooks to take effect."
+if $HOOKS_ONLY; then
+    echo "Done. Restart Claude Code for hooks to take effect."
+else
+    echo "Done. Reload tmux: tmux source ~/.tmux.conf"
+    echo "Then restart Claude Code for hooks to take effect."
+fi
