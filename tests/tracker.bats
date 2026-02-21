@@ -948,3 +948,243 @@ _integration_mock() {
     echo '{"session_id":"s1"}' | cmd_hook "SessionEnd"
     [[ "$(count_sessions)" -eq 0 ]]
 }
+
+# ── Configurable icons ───────────────────────────────────────────────
+
+@test "custom icons render in _write_cache" {
+    export ICON_IDLE="I"
+    export ICON_WORKING="W"
+    export ICON_COMPLETED="C"
+    export ICON_BLOCKED="B"
+    insert_session "w1" "working" "%1"
+    insert_session "i1" "idle" "%2"
+    insert_session "c1" "completed" "%3"
+    insert_session "b1" "blocked" "%4"
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    [[ "$out" == *"1I"* ]]
+    [[ "$out" == *"1W"* ]]
+    [[ "$out" == *"1C"* ]]
+    [[ "$out" == *"1B"* ]]
+}
+
+@test "custom icons work with blocked timer" {
+    export ICON_BLOCKED="B"
+    insert_session "b1" "blocked" "%1"
+    sql "UPDATE sessions SET updated_at = unixepoch() - 180 WHERE session_id='b1';"
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    [[ "$out" == *"1B3m"* ]]
+}
+
+@test "default icons unchanged when ICON vars unset" {
+    unset ICON_IDLE ICON_WORKING ICON_COMPLETED ICON_BLOCKED
+    insert_session "w1" "working" "%1"
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    [[ "$out" == *"1*"* ]]
+    [[ "$out" == *"0."* ]]
+    [[ "$out" == *"0+"* ]]
+    [[ "$out" == *"0!"* ]]
+}
+
+# ── Transition hooks ────────────────────────────────────────────────
+
+@test "_fire_transition_hook is no-op when _HAS_HOOKS=0" {
+    export _HAS_HOOKS="0"
+    _fire_transition_hook "idle" "working" "s1" "test"
+}
+
+@test "_fire_transition_hook fires per-state hook" {
+    export _HAS_HOOKS="1"
+    local _hook_log="$TEST_TMPDIR/hook.log"
+    export HOOK_ON_WORKING="$TEST_TMPDIR/hook.sh"
+    cat > "$HOOK_ON_WORKING" <<'SCRIPT'
+#!/bin/bash
+echo "$1 $2 $3 $4" >> "${0%/*}/hook.log"
+SCRIPT
+    chmod +x "$HOOK_ON_WORKING"
+    _fire_transition_hook "idle" "working" "s1" "myproject"
+    sleep 0.2
+    [[ -f "$_hook_log" ]]
+    [[ "$(cat "$_hook_log")" == "idle working s1 myproject" ]]
+}
+
+@test "_fire_transition_hook fires catch-all hook" {
+    export _HAS_HOOKS="1"
+    local _hook_log="$TEST_TMPDIR/catchall.log"
+    export HOOK_ON_TRANSITION="$TEST_TMPDIR/catchall.sh"
+    export HOOK_ON_WORKING=""
+    cat > "$HOOK_ON_TRANSITION" <<SCRIPT
+#!/bin/bash
+echo "\$1 \$2 \$3 \$4" >> "$_hook_log"
+SCRIPT
+    chmod +x "$HOOK_ON_TRANSITION"
+    _fire_transition_hook "idle" "working" "s1" "myproject"
+    sleep 0.2
+    [[ -f "$_hook_log" ]]
+    [[ "$(cat "$_hook_log")" == "idle working s1 myproject" ]]
+}
+
+@test "hook fires on working -> blocked transition" {
+    export _HAS_HOOKS="1"
+    local _hook_log="$TEST_TMPDIR/hook.log"
+    export HOOK_ON_BLOCKED="$TEST_TMPDIR/hook.sh"
+    cat > "$HOOK_ON_BLOCKED" <<'SCRIPT'
+#!/bin/bash
+echo "$1 $2 $3 $4" >> "${0%/*}/hook.log"
+SCRIPT
+    chmod +x "$HOOK_ON_BLOCKED"
+    insert_session "s1" "working" "%1"
+    sql "UPDATE sessions SET project_name='myproject' WHERE session_id='s1';"
+    echo '{"session_id":"s1","notification_type":"permission_prompt"}' | cmd_hook "Notification"
+    sleep 0.2
+    [[ -f "$_hook_log" ]]
+    [[ "$(cat "$_hook_log")" == "working blocked s1 myproject" ]]
+}
+
+@test "hook fires on blocked -> working transition" {
+    export _HAS_HOOKS="1"
+    local _hook_log="$TEST_TMPDIR/hook.log"
+    export HOOK_ON_WORKING="$TEST_TMPDIR/hook.sh"
+    cat > "$HOOK_ON_WORKING" <<'SCRIPT'
+#!/bin/bash
+echo "$1 $2 $3 $4" >> "${0%/*}/hook.log"
+SCRIPT
+    chmod +x "$HOOK_ON_WORKING"
+    insert_session "s1" "blocked" "%1"
+    sql "UPDATE sessions SET project_name='myproject' WHERE session_id='s1';"
+    echo '{"session_id":"s1","tool_name":"Read"}' | cmd_hook "PostToolUse"
+    sleep 0.2
+    [[ -f "$_hook_log" ]]
+    [[ "$(cat "$_hook_log")" == "blocked working s1 myproject" ]]
+}
+
+@test "hook does not fire when status unchanged" {
+    export _HAS_HOOKS="1"
+    local _hook_log="$TEST_TMPDIR/hook.log"
+    export HOOK_ON_WORKING="$TEST_TMPDIR/hook.sh"
+    cat > "$HOOK_ON_WORKING" <<'SCRIPT'
+#!/bin/bash
+echo "$1 $2 $3 $4" >> "${0%/*}/hook.log"
+SCRIPT
+    chmod +x "$HOOK_ON_WORKING"
+    insert_session "s1" "working" "%1"
+    echo '{"session_id":"s1","tool_name":"Read"}' | cmd_hook "PostToolUse"
+    sleep 0.2
+    [[ ! -f "$_hook_log" ]]
+}
+
+@test "hook fires on Stop (working -> completed)" {
+    export _HAS_HOOKS="1"
+    local _hook_log="$TEST_TMPDIR/hook.log"
+    export HOOK_ON_COMPLETED="$TEST_TMPDIR/hook.sh"
+    cat > "$HOOK_ON_COMPLETED" <<'SCRIPT'
+#!/bin/bash
+echo "$1 $2 $3 $4" >> "${0%/*}/hook.log"
+SCRIPT
+    chmod +x "$HOOK_ON_COMPLETED"
+    insert_session "s1" "working" "%1"
+    sql "UPDATE sessions SET project_name='myproject' WHERE session_id='s1';"
+    echo '{"session_id":"s1"}' | cmd_hook "Stop"
+    sleep 0.2
+    [[ -f "$_hook_log" ]]
+    [[ "$(cat "$_hook_log")" == "working completed s1 myproject" ]]
+}
+
+@test "hook fires on goto (completed -> idle)" {
+    export _HAS_HOOKS="1"
+    local _hook_log="$TEST_TMPDIR/hook.log"
+    export HOOK_ON_IDLE="$TEST_TMPDIR/hook.sh"
+    cat > "$HOOK_ON_IDLE" <<'SCRIPT'
+#!/bin/bash
+echo "$1 $2 $3 $4" >> "${0%/*}/hook.log"
+SCRIPT
+    chmod +x "$HOOK_ON_IDLE"
+    insert_session "s1" "completed" "%1"
+    sql "UPDATE sessions SET tmux_target='test:0.0', project_name='myproject' WHERE session_id='s1';"
+    cmd_goto "test:0.0"
+    sleep 0.2
+    [[ -f "$_hook_log" ]]
+    [[ "$(cat "$_hook_log")" == "completed idle s1 myproject" ]]
+}
+
+@test "hook fires on pane-focus (completed -> idle)" {
+    export _HAS_HOOKS="1"
+    local _hook_log="$TEST_TMPDIR/hook.log"
+    export HOOK_ON_IDLE="$TEST_TMPDIR/hook.sh"
+    cat > "$HOOK_ON_IDLE" <<'SCRIPT'
+#!/bin/bash
+echo "$1 $2 $3 $4" >> "${0%/*}/hook.log"
+SCRIPT
+    chmod +x "$HOOK_ON_IDLE"
+    insert_session "s1" "completed" "%1"
+    sql "UPDATE sessions SET project_name='myproject' WHERE session_id='s1';"
+    cmd_pane_focus "%1"
+    sleep 0.2
+    [[ -f "$_hook_log" ]]
+    [[ "$(cat "$_hook_log")" == "completed idle s1 myproject" ]]
+}
+
+# ── Sound + hook guard ───────────────────────────────────────────────
+
+@test "sound skipped when HOOK_ON_BLOCKED is set" {
+    export SOUND="1"
+    export HOOK_ON_BLOCKED="/bin/true"
+    export _HAS_HOOKS="1"
+    local _sound_played=0
+    _play_sound() { _sound_played=1; }
+    insert_session "s1" "working" "%1"
+    echo '{"session_id":"s1","notification_type":"permission_prompt"}' | cmd_hook "Notification"
+    [[ "$_sound_played" -eq 0 ]]
+}
+
+@test "sound plays when HOOK_ON_BLOCKED is not set" {
+    export SOUND="1"
+    export HOOK_ON_BLOCKED=""
+    export _HAS_HOOKS="0"
+    local _sound_played="$TEST_TMPDIR/sound_played"
+    _play_sound() { touch "$_sound_played"; }
+    insert_session "s1" "working" "%1"
+    echo '{"session_id":"s1","notification_type":"permission_prompt"}' | cmd_hook "Notification"
+    sleep 0.2
+    [[ -f "$_sound_played" ]]
+}
+
+# ── Old status capture ──────────────────────────────────────────────
+
+@test "_hook_post_tool captures old status" {
+    insert_session "s1" "blocked" "%1"
+    __changed=1
+    __render=""
+    __old_status=""
+    _hook_post_tool "s1"
+    [[ "$__old_status" == "blocked" ]]
+}
+
+@test "_hook_notification captures old status" {
+    insert_session "s1" "working" "%1"
+    __changed=1
+    __render=""
+    __old_status=""
+    __json='{}'
+    _hook_notification "s1"
+    [[ "$__old_status" == "working" ]]
+}
+
+@test "_hook_stop captures old status" {
+    insert_session "s1" "working" "%1"
+    __old_status=""
+    _hook_stop "s1"
+    [[ "$__old_status" == "working" ]]
+}
+
+@test "_hook_prompt captures old status" {
+    insert_session "s1" "idle" "%1"
+    __old_status=""
+    _hook_prompt "s1"
+    [[ "$__old_status" == "idle" ]]
+}

@@ -40,6 +40,16 @@ _play_sound() {
     esac
 }
 
+_fire_transition_hook() {
+    local from="$1" to="$2" sid="$3" project="$4"
+    [[ "${_HAS_HOOKS:-0}" == "0" ]] && return 0
+    local hook_var="HOOK_ON_${to^^}"
+    local cmd="${!hook_var:-}"
+    [[ -n "$cmd" ]] && ($cmd "$from" "$to" "$sid" "$project" &) 2>/dev/null
+    [[ -n "${HOOK_ON_TRANSITION:-}" ]] && ($HOOK_ON_TRANSITION "$from" "$to" "$sid" "$project" &) 2>/dev/null
+    return 0
+}
+
 # ── init ──────────────────────────────────────────────────────────────
 
 cmd_init() {
@@ -92,7 +102,7 @@ cmd_hook() {
         UserPromptSubmit) _ensure_session "$sid" "$json" "working" ;;
     esac
 
-    local __changed=1 __render="" __json="$json"
+    local __changed=1 __render="" __json="$json" __old_status="" __teammate_sid=""
     case "$event" in
         SessionStart)     ;; # _ensure_session already created as idle
         UserPromptSubmit) _hook_prompt "$sid" "$json" ;;
@@ -122,8 +132,41 @@ cmd_hook() {
     fi
 
     # Sound after render — config already loaded
-    if [[ "$event" == "Notification" && -n "$__render" && "${SOUND:-0}" == "1" ]]; then
+    # Skip built-in sound if HOOK_ON_BLOCKED is set (user handles it via hook)
+    if [[ "$event" == "Notification" && -n "$__render" && "${SOUND:-0}" == "1" && -z "${HOOK_ON_BLOCKED:-}" ]]; then
         _play_sound &
+    fi
+
+    # Fire transition hooks
+    if [[ -n "$__old_status" ]]; then
+        local _hook_new_status _hook_sid _hook_project
+        case "$event" in
+            TeammateIdle)
+                _hook_new_status="idle"
+                _hook_sid="${__teammate_sid:-$sid}"
+                ;;
+            UserPromptSubmit)
+                _hook_new_status="working"
+                _hook_sid="$sid"
+                ;;
+            PostToolUse|PostToolUseFailure)
+                _hook_new_status="working"
+                _hook_sid="$sid"
+                ;;
+            Stop)
+                _hook_new_status="completed"
+                _hook_sid="$sid"
+                ;;
+            Notification)
+                _hook_new_status="blocked"
+                _hook_sid="$sid"
+                ;;
+            *) _hook_new_status="" ;;
+        esac
+        if [[ -n "$_hook_new_status" && "$__old_status" != "$_hook_new_status" ]]; then
+            _hook_project=$(sql "SELECT project_name FROM sessions WHERE session_id='$(sql_esc "$_hook_sid")';")
+            _fire_transition_hook "$__old_status" "$_hook_new_status" "$_hook_sid" "$_hook_project"
+        fi
     fi
 }
 
@@ -175,26 +218,39 @@ _ensure_session() {
 
 _hook_prompt() {
     local sid="$1"
+    __old_status=$(sql "SELECT status FROM sessions WHERE session_id='$sid';")
     sql "UPDATE sessions SET status='working', updated_at=unixepoch()
          WHERE session_id='$sid';"
 }
 
-# Hot path: UPDATE + render in one sqlite3 call
+# Hot path: SELECT old status + UPDATE + render in one sqlite3 call
 _hook_post_tool() {
     local sid="$1"
-    __render=$(sql "UPDATE sessions SET status='working', updated_at=unixepoch()
+    local _result
+    _result=$(sql "SELECT status FROM sessions WHERE session_id='$sid';
+         UPDATE sessions SET status='working', updated_at=unixepoch()
          WHERE session_id='$sid' AND status!='working';
          SELECT CASE WHEN changes() = 0 THEN '' ELSE ($_RENDER_SQL) END;")
+    # Two output lines when changed: old_status\nrender_data
+    # One line when no-op: old_status (empty CASE produces no output)
+    if [[ "$_result" == *$'\n'* ]]; then
+        __old_status="${_result%%$'\n'*}"
+        __render="${_result#*$'\n'}"
+    else
+        __old_status="$_result"
+        __render=""
+    fi
     if [[ -z "$__render" ]]; then __changed=0; fi
 }
 
 _hook_stop() {
     local sid="$1"
+    __old_status=$(sql "SELECT status FROM sessions WHERE session_id='$sid';")
     sql "UPDATE sessions SET status='completed', updated_at=unixepoch()
          WHERE session_id='$sid' AND status IN ('working', 'blocked');"
 }
 
-# Hot path: UPDATE + render in one sqlite3 call
+# Hot path: SELECT old status + UPDATE + render in one sqlite3 call
 # Only permission_prompt and elicitation_dialog should set blocked.
 # Other notification types (idle_prompt, auth_success) are not permission waits.
 # The hook config matcher should filter to these, but we guard here too.
@@ -205,9 +261,18 @@ _hook_notification() {
     if [[ -n "$ntype" && "$ntype" != "permission_prompt" && "$ntype" != "elicitation_dialog" ]]; then
         __changed=0; return 0
     fi
-    __render=$(sql "UPDATE sessions SET status='blocked', updated_at=unixepoch()
+    local _result
+    _result=$(sql "SELECT status FROM sessions WHERE session_id='$sid';
+         UPDATE sessions SET status='blocked', updated_at=unixepoch()
          WHERE session_id='$sid' AND status = 'working';
          SELECT CASE WHEN changes() = 0 THEN '' ELSE ($_RENDER_SQL) END;")
+    if [[ "$_result" == *$'\n'* ]]; then
+        __old_status="${_result%%$'\n'*}"
+        __render="${_result#*$'\n'}"
+    else
+        __old_status="$_result"
+        __render=""
+    fi
     if [[ -z "$__render" ]]; then __changed=0; fi
 }
 
@@ -217,9 +282,12 @@ _hook_teammate_idle() {
     tid=$(_json_val "$json" "teammate_id")
     [[ -z "$tid" ]] && tid=$(_json_val "$json" "session_id")
     [[ -z "$tid" ]] && return 0
+    local raw_tid="$tid"
     tid=$(sql_esc "$tid")
+    __old_status=$(sql "SELECT status FROM sessions WHERE session_id='$tid';")
     sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
          WHERE session_id='$tid';"
+    __teammate_sid="$raw_tid"
 }
 
 # ── render cache ──────────────────────────────────────────────────────
@@ -242,9 +310,9 @@ _write_cache() {
     IFS='|' read -r w b i c dur <<< "$1"
     w="${w:-0}"; b="${b:-0}"; i="${i:-0}"; c="${c:-0}"; dur="${dur:-0}"
     local result=""
-    result+="#[fg=${COLOR_IDLE}]${i}.#[default] "
-    result+="#[fg=${COLOR_WORKING}]${w}*#[default] "
-    result+="#[fg=${COLOR_COMPLETED}]${c}+#[default] "
+    result+="#[fg=${COLOR_IDLE}]${i}${ICON_IDLE:-.}#[default] "
+    result+="#[fg=${COLOR_WORKING}]${w}${ICON_WORKING:-*}#[default] "
+    result+="#[fg=${COLOR_COMPLETED}]${c}${ICON_COMPLETED:-+}#[default] "
 
     if [[ "$b" -gt 0 ]]; then
         local suffix=""
@@ -253,9 +321,9 @@ _write_cache() {
         elif [[ "$dur" -gt 0 ]]; then
             suffix="${dur}m"
         fi
-        result+="#[fg=${COLOR_BLOCKED}]${b}!${suffix}#[default]"
+        result+="#[fg=${COLOR_BLOCKED}]${b}${ICON_BLOCKED:-!}${suffix}#[default]"
     else
-        result+="#[fg=${COLOR_BLOCKED}]${b}!#[default]"
+        result+="#[fg=${COLOR_BLOCKED}]${b}${ICON_BLOCKED:-!}#[default]"
     fi
 
     if [[ -n "${2:-}" ]]; then
@@ -352,10 +420,10 @@ cmd_menu() {
         [[ -z "$_sid" ]] && continue
         local icon label
         case "$status" in
-            blocked)   icon="!" ;;
-            completed) icon="+" ;;
-            working)   icon="*" ;;
-            *)         icon="." ;;
+            blocked)   icon="${ICON_BLOCKED:-!}" ;;
+            completed) icon="${ICON_COMPLETED:-+}" ;;
+            working)   icon="${ICON_WORKING:-*}" ;;
+            *)         icon="${ICON_IDLE:-.}" ;;
         esac
 
         label="${icon} ${project}"
@@ -523,8 +591,16 @@ cmd_goto() {
     tmux switch-client -t "$sess" 2>/dev/null || true
     tmux select-window -t "$win" 2>/dev/null || true
     tmux select-pane -t "$target" 2>/dev/null || true
-    sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
-         WHERE tmux_target='$(sql_esc "$target")' AND status='completed';" 2>/dev/null || true
+    local _goto_sid _goto_project
+    _goto_sid=$(sql "SELECT session_id FROM sessions
+         WHERE tmux_target='$(sql_esc "$target")' AND status='completed' LIMIT 1;") || true
+    if [[ -n "$_goto_sid" ]]; then
+        sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
+             WHERE session_id='$(sql_esc "$_goto_sid")' AND status='completed';" 2>/dev/null || true
+        _load_config_fast
+        _goto_project=$(sql "SELECT project_name FROM sessions WHERE session_id='$(sql_esc "$_goto_sid")';") || true
+        _fire_transition_hook "completed" "idle" "$_goto_sid" "$_goto_project"
+    fi
     _render_cache 2>/dev/null || true
     tmux refresh-client -S 2>/dev/null || true
 }
@@ -534,14 +610,21 @@ cmd_goto() {
 cmd_pane_focus() {
     [[ -f "$DB" ]] || return 0
     local pane_id="$1"
-    local changed
-    changed=$(sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
-         WHERE tmux_pane='$(sql_esc "$pane_id")' AND status='completed';
-         SELECT changes();")
-    if [[ "${changed:-0}" -gt 0 ]]; then
-        _render_cache 2>/dev/null || true
-        tmux refresh-client -S 2>/dev/null || true
-    fi
+    local _focus_sids
+    _focus_sids=$(sql "SELECT session_id FROM sessions
+         WHERE tmux_pane='$(sql_esc "$pane_id")' AND status='completed';") || true
+    [[ -z "$_focus_sids" ]] && return 0
+    sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
+         WHERE tmux_pane='$(sql_esc "$pane_id")' AND status='completed';"
+    _load_config_fast
+    while IFS= read -r _fsid; do
+        [[ -z "$_fsid" ]] && continue
+        local _fproject
+        _fproject=$(sql "SELECT project_name FROM sessions WHERE session_id='$(sql_esc "$_fsid")';") || true
+        _fire_transition_hook "completed" "idle" "$_fsid" "$_fproject"
+    done <<< "$_focus_sids"
+    _render_cache 2>/dev/null || true
+    tmux refresh-client -S 2>/dev/null || true
 }
 
 # ── main ──────────────────────────────────────────────────────────────

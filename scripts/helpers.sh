@@ -39,6 +39,16 @@ COLOR_IDLE=""
 COLOR_COMPLETED=""
 SOUND=""
 SHOW_PROJECT=""
+ICON_IDLE=""
+ICON_WORKING=""
+ICON_COMPLETED=""
+ICON_BLOCKED=""
+HOOK_ON_WORKING=""
+HOOK_ON_COMPLETED=""
+HOOK_ON_BLOCKED=""
+HOOK_ON_IDLE=""
+HOOK_ON_TRANSITION=""
+_HAS_HOOKS=""
 
 load_config() {
     local cache="${TRACKER_DIR:-$HOME/.tmux-claude-agent-tracker}/config_cache"
@@ -65,6 +75,20 @@ load_config() {
     COLOR_COMPLETED=$(get_tmux_option "@claude-tracker-color-completed" "black")
     SOUND=$(get_tmux_option "@claude-tracker-sound" "0")
     SHOW_PROJECT=$(get_tmux_option "@claude-tracker-show-project" "0")
+    ICON_IDLE=$(get_tmux_option "@claude-tracker-icon-idle" ".")
+    ICON_WORKING=$(get_tmux_option "@claude-tracker-icon-working" "*")
+    ICON_COMPLETED=$(get_tmux_option "@claude-tracker-icon-completed" "+")
+    ICON_BLOCKED=$(get_tmux_option "@claude-tracker-icon-blocked" "!")
+    HOOK_ON_WORKING=$(get_tmux_option "@claude-tracker-on-working" "")
+    HOOK_ON_COMPLETED=$(get_tmux_option "@claude-tracker-on-completed" "")
+    HOOK_ON_BLOCKED=$(get_tmux_option "@claude-tracker-on-blocked" "")
+    HOOK_ON_IDLE=$(get_tmux_option "@claude-tracker-on-idle" "")
+    HOOK_ON_TRANSITION=$(get_tmux_option "@claude-tracker-on-transition" "")
+    if [[ -n "$HOOK_ON_WORKING" || -n "$HOOK_ON_COMPLETED" || -n "$HOOK_ON_BLOCKED" || -n "$HOOK_ON_IDLE" || -n "$HOOK_ON_TRANSITION" ]]; then
+        _HAS_HOOKS=1
+    else
+        _HAS_HOOKS=0
+    fi
 
     # Atomic write — safe for concurrent hook invocations
     cat > "${cache}.tmp" <<EOF
@@ -79,6 +103,16 @@ COLOR_IDLE='$COLOR_IDLE'
 COLOR_COMPLETED='$COLOR_COMPLETED'
 SOUND='$SOUND'
 SHOW_PROJECT='$SHOW_PROJECT'
+ICON_IDLE='$ICON_IDLE'
+ICON_WORKING='$ICON_WORKING'
+ICON_COMPLETED='$ICON_COMPLETED'
+ICON_BLOCKED='$ICON_BLOCKED'
+HOOK_ON_WORKING='$HOOK_ON_WORKING'
+HOOK_ON_COMPLETED='$HOOK_ON_COMPLETED'
+HOOK_ON_BLOCKED='$HOOK_ON_BLOCKED'
+HOOK_ON_IDLE='$HOOK_ON_IDLE'
+HOOK_ON_TRANSITION='$HOOK_ON_TRANSITION'
+_HAS_HOOKS='$_HAS_HOOKS'
 EOF
     mv -f "${cache}.tmp" "$cache"
 }

@@ -168,6 +168,50 @@ Multiple concurrent hook processes. WAL mode handles this:
 | SessionEnd | any -> (deleted) | unconditional |
 | TeammateIdle | any -> idle | unconditional |
 
+## Configurable Icons
+
+Status icons are configurable via tmux options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `@claude-tracker-icon-idle` | `.` | Idle session indicator |
+| `@claude-tracker-icon-working` | `*` | Working session indicator |
+| `@claude-tracker-icon-completed` | `+` | Completed session indicator |
+| `@claude-tracker-icon-blocked` | `!` | Blocked session indicator |
+
+Icons are loaded into `ICON_*` vars via `load_config` and cached alongside colors. `_write_cache` and `cmd_menu` use `${ICON_*:-default}` with fallbacks, so unset vars produce the original display.
+
+## State Transition Hooks
+
+User-defined commands that fire on state transitions:
+
+| Option | Fires on |
+|--------|----------|
+| `@claude-tracker-on-working` | any -> working |
+| `@claude-tracker-on-completed` | any -> completed |
+| `@claude-tracker-on-blocked` | any -> blocked |
+| `@claude-tracker-on-idle` | any -> idle |
+| `@claude-tracker-on-transition` | every transition (catch-all) |
+
+Each command receives: `$1=from_status $2=to_status $3=session_id $4=project_name`
+
+### Performance
+
+A precomputed `_HAS_HOOKS` flag in the config cache. When no hooks configured: zero cost (single string comparison, early return). When hooks configured:
+
+- **Hot-path** (PostToolUse, Notification): one extra `SELECT status` prepended to the batched sqlite3 call (~0ms overhead, same process)
+- **Non-hot-path** (UserPromptSubmit, Stop, TeammateIdle): one extra sqlite3 call (~5ms)
+- **Hook execution**: background subshell, non-blocking (`($cmd "$@" &)`)
+
+### Sound migration
+
+When `HOOK_ON_BLOCKED` is set, the built-in `_play_sound` is skipped — the user's hook replaces it. `SOUND=1` still works when no blocked hook is configured.
+
+### Firing locations
+
+- `cmd_hook` — after render, before returning. Compares `__old_status` (captured by each `_hook_*` function) against the new status.
+- `cmd_goto` / `cmd_pane_focus` — fires `completed -> idle` after UPDATE.
+
 ## Database Schema
 
 ```sql

@@ -19,6 +19,20 @@ setup_test_env() {
     export SOUND="0"
     export TMUX_PANE=""
 
+    # Icon defaults
+    export ICON_IDLE="."
+    export ICON_WORKING="*"
+    export ICON_COMPLETED="+"
+    export ICON_BLOCKED="!"
+
+    # Hook defaults (none configured)
+    export HOOK_ON_WORKING=""
+    export HOOK_ON_COMPLETED=""
+    export HOOK_ON_BLOCKED=""
+    export HOOK_ON_IDLE=""
+    export HOOK_ON_TRANSITION=""
+    export _HAS_HOOKS="0"
+
     # Initialize DB schema (suppress PRAGMA output)
     mkdir -p "$TRACKER_DIR"
     sqlite3 "$DB" <<'SQL' >/dev/null 2>&1
