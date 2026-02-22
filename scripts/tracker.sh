@@ -79,12 +79,12 @@ _tmux() {
 }
 
 _fire_transition_hook() {
-    local from="$1" to="$2" sid="$3" project="$4"
+    local from="$1" to="$2" sid="$3" project="$4" summary="${5:-}"
     [[ "${_HAS_HOOKS:-0}" == "0" ]] && return 0
     local hook_var="HOOK_ON_$(printf '%s' "$to" | tr '[:lower:]' '[:upper:]')"
     local cmd="${!hook_var:-}"
-    [[ -n "$cmd" ]] && ($cmd "$from" "$to" "$sid" "$project" &) 2>/dev/null
-    [[ -n "${HOOK_ON_TRANSITION:-}" ]] && ($HOOK_ON_TRANSITION "$from" "$to" "$sid" "$project" &) 2>/dev/null
+    [[ -n "$cmd" ]] && (eval "$cmd" "$from" "$to" "$sid" "$project" "$summary" &) 2>/dev/null
+    [[ -n "${HOOK_ON_TRANSITION:-}" ]] && (eval "$HOOK_ON_TRANSITION" "$from" "$to" "$sid" "$project" "$summary" &) 2>/dev/null
     return 0
 }
 
@@ -288,8 +288,10 @@ cmd_hook() {
             *) _hook_new_status="" ;;
         esac
         if [[ -n "$_hook_new_status" && "$__old_status" != "$_hook_new_status" ]]; then
+            local _hook_project _hook_summary
             _hook_project=$(sql "SELECT project_name FROM sessions WHERE session_id='$(sql_esc "$_hook_sid")';")
-            _fire_transition_hook "$__old_status" "$_hook_new_status" "$_hook_sid" "$_hook_project"
+            _hook_summary=$(sql "SELECT prompt_summary FROM sessions WHERE session_id='$(sql_esc "$_hook_sid")';")
+            _fire_transition_hook "$__old_status" "$_hook_new_status" "$_hook_sid" "$_hook_project" "$_hook_summary"
         fi
     fi
 }
@@ -397,11 +399,20 @@ cmd_codex_notify() {
 }
 
 _hook_prompt() {
-    local sid="$1"
+    local sid="$1" json="${2:-}"
     __old_status=$(sql "SELECT status FROM sessions WHERE session_id='$sid';")
     _debug_log "prompt sid=$sid old=$__old_status"
-    sql "UPDATE sessions SET status='working', task_count=0, updated_at=unixepoch()
-         WHERE session_id='$sid';"
+    local _prompt
+    _prompt=$(_json_val "$json" "prompt")
+    if [[ -n "$_prompt" ]]; then
+        _prompt="${_prompt:0:80}"
+        sql "UPDATE sessions SET status='working', task_count=0, updated_at=unixepoch(),
+             prompt_summary='$(sql_esc "$_prompt")'
+             WHERE session_id='$sid';"
+    else
+        sql "UPDATE sessions SET status='working', task_count=0, updated_at=unixepoch()
+             WHERE session_id='$sid';"
+    fi
 }
 
 # Hot path: SELECT old status + UPDATE + render in one sqlite3 call
@@ -948,7 +959,9 @@ cmd_goto() {
         sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
              WHERE session_id='$(sql_esc "$_goto_sid")' AND status='completed';" 2>/dev/null || true
         _goto_project=$(sql "SELECT project_name FROM sessions WHERE session_id='$(sql_esc "$_goto_sid")';") || true
-        _fire_transition_hook "completed" "idle" "$_goto_sid" "$_goto_project"
+        local _goto_summary
+        _goto_summary=$(sql "SELECT prompt_summary FROM sessions WHERE session_id='$(sql_esc "$_goto_sid")';") || true
+        _fire_transition_hook "completed" "idle" "$_goto_sid" "$_goto_project" "$_goto_summary"
     fi
     _render_cache 2>/dev/null || true
     tmux refresh-client -S 2>/dev/null || true
@@ -970,9 +983,10 @@ cmd_pane_focus() {
     while IFS= read -r _fsid; do
         [[ -z "$_fsid" ]] && continue
         _debug_log "pane_focus_clear sid=$_fsid completed->idle"
-        local _fproject
+        local _fproject _fsummary
         _fproject=$(sql "SELECT project_name FROM sessions WHERE session_id='$(sql_esc "$_fsid")';") || true
-        _fire_transition_hook "completed" "idle" "$_fsid" "$_fproject"
+        _fsummary=$(sql "SELECT prompt_summary FROM sessions WHERE session_id='$(sql_esc "$_fsid")';") || true
+        _fire_transition_hook "completed" "idle" "$_fsid" "$_fproject" "$_fsummary"
     done <<< "$_focus_sids"
     _render_cache 2>/dev/null || true
     tmux refresh-client -S 2>/dev/null || true

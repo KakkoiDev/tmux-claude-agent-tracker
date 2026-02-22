@@ -228,7 +228,7 @@ set -g @claude-tracker-icon-blocked '🔴'
 
 ### State Transition Hooks
 
-Run shell commands when an agent changes state. Each command receives 4 arguments: `$1=from_state $2=to_state $3=session_id $4=project_name`. Commands run asynchronously (backgrounded).
+Run shell commands when an agent changes state. Each command receives 5 arguments: `$1=from_state $2=to_state $3=session_id $4=project_name $5=prompt_summary`. Commands run asynchronously (backgrounded).
 
 | Option | Default | Fires on |
 |--------|---------|----------|
@@ -250,6 +250,14 @@ set -g @claude-tracker-on-blocked 'paplay /usr/share/sounds/freedesktop/stereo/c
 set -g @claude-tracker-on-completed 'afplay /System/Library/Sounds/Glass.aiff'
 set -g @claude-tracker-on-blocked 'afplay /System/Library/Sounds/Glass.aiff'
 
+# Phone push notifications via ntfy.sh (free, no account needed)
+# 1. Install ntfy app on phone (App Store / Google Play)
+# 2. Pick a unique topic name:
+#      echo "claude-$(openssl rand -hex 4)"
+# 3. Subscribe to that topic in the ntfy app
+# 4. Add hooks (replace MY_TOPIC with your topic name):
+set -g @claude-tracker-on-blocked '/usr/bin/curl -s -d "Blocked: $5" ntfy.sh/MY_TOPIC'
+set -g @claude-tracker-on-completed '/usr/bin/curl -s -d "Completed: $5" ntfy.sh/MY_TOPIC'
 ```
 
 ### Phone Push Notifications (ntfy.sh)
