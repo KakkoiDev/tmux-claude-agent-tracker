@@ -671,6 +671,59 @@ teardown() {
     [[ "$(cat "$CACHE")" == *"5m"* ]]
 }
 
+@test "cmd_refresh skips pane-focus for fresh completed (grace period)" {
+    local run_shell_called=0
+    tmux() {
+        if [[ "${1:-}" == "show-option" && "${3:-}" == "status-interval" ]]; then
+            echo "15"
+        elif [[ "${1:-}" == "run-shell" ]]; then
+            run_shell_called=1
+        fi
+        return 0
+    }
+
+    # Completed just now — within grace period
+    insert_session "s1" "completed" "%1"
+    cmd_refresh
+    [[ "$run_shell_called" -eq 0 ]]
+}
+
+@test "cmd_refresh triggers pane-focus for stale completed (past grace period)" {
+    local run_shell_called=0
+    tmux() {
+        if [[ "${1:-}" == "show-option" && "${3:-}" == "status-interval" ]]; then
+            echo "15"
+        elif [[ "${1:-}" == "run-shell" ]]; then
+            run_shell_called=1
+        fi
+        return 0
+    }
+
+    # Completed 20 seconds ago — past 15s grace period
+    insert_session "s1" "completed" "%1"
+    sql "UPDATE sessions SET updated_at = unixepoch() - 20 WHERE session_id='s1';"
+    cmd_refresh
+    [[ "$run_shell_called" -eq 1 ]]
+}
+
+@test "cmd_refresh grace period uses tmux status-interval" {
+    local run_shell_called=0
+    tmux() {
+        if [[ "${1:-}" == "show-option" && "${3:-}" == "status-interval" ]]; then
+            echo "60"
+        elif [[ "${1:-}" == "run-shell" ]]; then
+            run_shell_called=1
+        fi
+        return 0
+    }
+
+    # Completed 30 seconds ago — within 60s grace period
+    insert_session "s1" "completed" "%1"
+    sql "UPDATE sessions SET updated_at = unixepoch() - 30 WHERE session_id='s1';"
+    cmd_refresh
+    [[ "$run_shell_called" -eq 0 ]]
+}
+
 @test "cmd_refresh is no-op without DB" {
     rm -f "$DB"
     local out

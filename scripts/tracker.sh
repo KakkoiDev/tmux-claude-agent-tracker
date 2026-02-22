@@ -372,12 +372,16 @@ cmd_status_bar() {
 cmd_refresh() {
     [[ -f "$DB" ]] || return 0
     _render_cache 2>/dev/null || true
-    # Auto-clear completed on focused pane. Deferred here (not in Stop) so the
-    # completed indicator is visible for one refresh cycle before clearing.
+    # Auto-clear completed on focused pane, but only after a grace period
+    # so the completed indicator is visible for at least one full refresh cycle.
     # tmux resolves #{pane_id} at run-shell call time, not subprocess context.
-    local has_completed
-    has_completed=$(sql "SELECT 1 FROM sessions WHERE status='completed' LIMIT 1;")
-    if [[ -n "$has_completed" ]]; then
+    local grace
+    grace=$(tmux show-option -gqv status-interval 2>/dev/null) || grace=15
+    grace="${grace:-15}"
+    local has_stale_completed
+    has_stale_completed=$(sql "SELECT 1 FROM sessions WHERE status='completed'
+         AND updated_at <= unixepoch() - $grace LIMIT 1;")
+    if [[ -n "$has_stale_completed" ]]; then
         tmux run-shell -b "$SCRIPTS_DIR/tracker.sh pane-focus #{pane_id}" 2>/dev/null || true
     fi
     # No stdout — #() renders empty string; display comes from #{@claude-tracker-status}
