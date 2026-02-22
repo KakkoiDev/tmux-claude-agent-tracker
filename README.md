@@ -162,6 +162,54 @@ set -g @claude-tracker-on-completed 'afplay /System/Library/Sounds/Glass.aiff'
 set -g @claude-tracker-on-blocked 'afplay /System/Library/Sounds/Glass.aiff'
 ```
 
+## Remote Access (Phone / Tablet)
+
+Access your tmux sessions from a phone or tablet using [Tailscale](https://tailscale.com) + SSH. Tailscale creates an encrypted WireGuard tunnel — no port forwarding, no dynamic DNS.
+
+### Linux
+
+```bash
+# Install Tailscale
+curl -fsSL https://tailscale.com/install.sh | sh
+
+# Enable Tailscale SSH (authenticates via Tailscale identity, no SSH keys needed)
+sudo tailscale up --ssh
+
+# Install SSH server if not already present
+sudo apt install openssh-server   # Debian/Ubuntu
+sudo dnf install openssh-server   # Fedora
+```
+
+### macOS
+
+```bash
+# Install Tailscale via Mac App Store or Homebrew
+brew install --cask tailscale
+
+# Open Tailscale from Applications — sign in and enable SSH in the menu bar icon
+# Or from CLI:
+sudo tailscale up --ssh
+
+# macOS has SSH built in — enable it:
+# System Settings > General > Sharing > Remote Login
+```
+
+### Phone Setup
+
+1. Install Tailscale on your phone (App Store / Google Play) and sign in with the same account
+2. Install an SSH client — **Termius** (iOS/Android, free) or **Termux** (Android)
+3. Get your machine's Tailscale IP: `tailscale ip`
+4. SSH from phone: `ssh user@100.x.y.z`
+5. Attach to your session: `tmux attach`
+
+### Verify
+
+```bash
+tailscale status    # device online
+tailscale ip        # 100.x.y.z address
+ssh localhost       # SSH works locally
+```
+
 ## License
 
 MIT
