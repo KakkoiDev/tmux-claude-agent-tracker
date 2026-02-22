@@ -31,15 +31,6 @@ _RENDER_SQL="SELECT
     COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked'),0)
     FROM sessions"
 
-_play_sound() {
-    case "$(uname)" in
-        Darwin) afplay /System/Library/Sounds/Glass.aiff ;;
-        *)      paplay /usr/share/sounds/freedesktop/stereo/complete.oga 2>/dev/null \
-                || aplay /usr/share/sounds/freedesktop/stereo/complete.oga 2>/dev/null \
-                || true ;;
-    esac
-}
-
 _fire_transition_hook() {
     local from="$1" to="$2" sid="$3" project="$4"
     [[ "${_HAS_HOOKS:-0}" == "0" ]] && return 0
@@ -129,12 +120,6 @@ cmd_hook() {
     elif [[ "$__changed" -eq 1 ]]; then
         _render_cache 2>/dev/null || true
         tmux refresh-client -S 2>/dev/null || true
-    fi
-
-    # Sound after render — config already loaded
-    # Skip built-in sound if HOOK_ON_BLOCKED is set (user handles it via hook)
-    if [[ "$event" == "Notification" && -n "$__render" && "${SOUND:-0}" == "1" && -z "${HOOK_ON_BLOCKED:-}" ]]; then
-        _play_sound &
     fi
 
     # Fire transition hooks

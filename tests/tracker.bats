@@ -1182,31 +1182,6 @@ SCRIPT
     [[ "$(cat "$_hook_log")" == "completed idle s1 myproject" ]]
 }
 
-# ── Sound + hook guard ───────────────────────────────────────────────
-
-@test "sound skipped when HOOK_ON_BLOCKED is set" {
-    export SOUND="1"
-    export HOOK_ON_BLOCKED="/bin/true"
-    export _HAS_HOOKS="1"
-    local _sound_played=0
-    _play_sound() { _sound_played=1; }
-    insert_session "s1" "working" "%1"
-    echo '{"session_id":"s1","notification_type":"permission_prompt"}' | cmd_hook "Notification"
-    [[ "$_sound_played" -eq 0 ]]
-}
-
-@test "sound plays when HOOK_ON_BLOCKED is not set" {
-    export SOUND="1"
-    export HOOK_ON_BLOCKED=""
-    export _HAS_HOOKS="0"
-    local _sound_played="$TEST_TMPDIR/sound_played"
-    _play_sound() { touch "$_sound_played"; }
-    insert_session "s1" "working" "%1"
-    echo '{"session_id":"s1","notification_type":"permission_prompt"}' | cmd_hook "Notification"
-    sleep 0.2
-    [[ -f "$_sound_played" ]]
-}
-
 # ── Old status capture ──────────────────────────────────────────────
 
 @test "_hook_post_tool captures old status" {

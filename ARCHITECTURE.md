@@ -240,10 +240,6 @@ A precomputed `_HAS_HOOKS` flag in the config cache. When no hooks configured: z
 - **Non-hot-path** (UserPromptSubmit, Stop, TeammateIdle): one extra sqlite3 call (~5ms)
 - **Hook execution**: background subshell, non-blocking (`($cmd "$@" &)`)
 
-### Sound migration
-
-When `HOOK_ON_BLOCKED` is set, the built-in `_play_sound` is skipped — the user's hook replaces it. `SOUND=1` still works when no blocked hook is configured.
-
 ### Firing locations
 
 - `cmd_hook` — after render, before returning. Compares `__old_status` (captured by each `_hook_*` function) against the new status.

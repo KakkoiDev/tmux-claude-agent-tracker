@@ -16,7 +16,6 @@ setup_test_env() {
     export COLOR_BLOCKED="black"
     export COLOR_IDLE="black"
     export COLOR_COMPLETED="black"
-    export SOUND="0"
     export TMUX_PANE=""
 
     # Icon defaults
@@ -80,7 +79,6 @@ source_tracker_functions() {
     get_tmux_option() { echo "${2:-}"; }
     tmux() { true; }
     git() { true; }
-    _play_sound() { true; }
     # Platform helper needed by throttle logic
     _file_mtime() {
         case "$(uname)" in

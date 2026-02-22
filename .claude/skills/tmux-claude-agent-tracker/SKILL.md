@@ -93,14 +93,6 @@ Set in `~/.tmux.conf` with `set -g @option value`.
 | `@claude-tracker-icon-completed` | `+` | Completed indicator |
 | `@claude-tracker-icon-blocked` | `!` | Blocked indicator |
 
-### Sound
-
-| Option | Default | Purpose |
-|--------|---------|---------|
-| `@claude-tracker-sound` | `0` | `1` to play system sound on block |
-
-Sound is disabled when `@claude-tracker-on-blocked` is set (user handles it via hook).
-
 ### State Transition Hooks
 
 Shell commands executed when an agent changes state. Each receives 4 args: `$1=from_state $2=to_state $3=session_id $4=project_name`. Runs async (backgrounded).

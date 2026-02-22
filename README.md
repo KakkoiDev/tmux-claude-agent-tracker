@@ -137,14 +137,6 @@ set -g @claude-tracker-icon-completed '✅'
 set -g @claude-tracker-icon-blocked '🔴'
 ```
 
-### Sound
-
-| Option | Default | Purpose |
-|--------|---------|---------|
-| `@claude-tracker-sound` | `0` | `1` to play system sound on block |
-
-Sound is automatically disabled when `@claude-tracker-on-blocked` is set, since you handle notifications via the hook instead.
-
 ### State Transition Hooks
 
 Run shell commands when an agent changes state. Each command receives 4 arguments: `$1=from_state $2=to_state $3=session_id $4=project_name`. Commands run asynchronously (backgrounded).
@@ -158,8 +150,16 @@ Run shell commands when an agent changes state. Each command receives 4 argument
 | `@claude-tracker-on-transition` | `""` | Any state change (catch-all) |
 
 ```bash
+# Desktop notification when blocked
 set -g @claude-tracker-on-blocked 'notify-send "Claude blocked" "Agent in $4 needs attention"'
-set -g @claude-tracker-on-completed 'paplay /usr/share/sounds/complete.oga'
+
+# Sound alert when completed or blocked
+set -g @claude-tracker-on-completed 'paplay /usr/share/sounds/freedesktop/stereo/complete.oga'
+set -g @claude-tracker-on-blocked 'paplay /usr/share/sounds/freedesktop/stereo/complete.oga'
+
+# macOS equivalents
+set -g @claude-tracker-on-completed 'afplay /System/Library/Sounds/Glass.aiff'
+set -g @claude-tracker-on-blocked 'afplay /System/Library/Sounds/Glass.aiff'
 ```
 
 ## License
