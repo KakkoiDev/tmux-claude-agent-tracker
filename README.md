@@ -160,6 +160,15 @@ set -g @claude-tracker-on-blocked 'paplay /usr/share/sounds/freedesktop/stereo/c
 # macOS equivalents
 set -g @claude-tracker-on-completed 'afplay /System/Library/Sounds/Glass.aiff'
 set -g @claude-tracker-on-blocked 'afplay /System/Library/Sounds/Glass.aiff'
+
+# Phone push notifications via ntfy.sh (free, no account needed)
+# 1. Install ntfy app on phone (App Store / Google Play)
+# 2. Pick a unique topic name:
+#      echo "claude-$(openssl rand -hex 4)"
+# 3. Subscribe to that topic in the ntfy app
+# 4. Add hooks (replace MY_TOPIC with your topic name):
+set -g @claude-tracker-on-blocked 'curl -s -d "Agent in $4 needs attention" ntfy.sh/MY_TOPIC'
+set -g @claude-tracker-on-completed 'curl -s -d "Agent in $4 finished" ntfy.sh/MY_TOPIC'
 ```
 
 ## Remote Access (Phone / Tablet)
