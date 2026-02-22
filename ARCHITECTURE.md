@@ -67,6 +67,29 @@ Transition guards:
 - `goto` -> idle (`WHERE status='completed'`, clears completed when user focuses pane via menu)
 - `session-window-changed` / `window-pane-changed` -> idle (`WHERE status='completed' AND tmux_pane=<focused_pane>`, clears completed when user navigates to pane)
 
+## Completed Auto-Clear
+
+Completed (`+`) auto-clears to idle when the user is viewing the pane. Three mechanisms:
+
+1. **Navigation hooks** (immediate): `session-window-changed`, `window-pane-changed`, `client-session-changed` fire `cmd_pane_focus` which clears completed on the focused pane.
+2. **Menu goto** (immediate): `cmd_goto` clears completed when jumping to a pane.
+3. **Refresh cycle** (periodic): `cmd_refresh` spawns `pane-focus` for the active pane every `status-interval` seconds.
+
+### Grace period
+
+The refresh-cycle auto-clear uses a grace period to prevent completed from being invisible. Without it, `cmd_refresh` would clear completed on the same refresh cycle it first rendered — the user would never see the `+` indicator.
+
+The grace period works by checking `updated_at` against the current time:
+
+```sql
+SELECT 1 FROM sessions WHERE status='completed'
+    AND updated_at <= unixepoch() - $grace LIMIT 1;
+```
+
+`$grace` is read from tmux's `status-interval` (typically 15s). A completed session must have been in that state for at least one full refresh interval before `pane-focus` is triggered. This guarantees the `+` indicator is visible for at least one refresh cycle.
+
+Navigation hooks (mechanism 1-2) bypass the grace period — explicit user navigation always clears immediately.
+
 ## Hook Performance
 
 State-changing hooks run in ~77ms. No-op hooks (e.g. PostToolUse when already working) run in ~65ms.
@@ -106,9 +129,19 @@ Hook path uses `_load_config_fast` which sources the cache file directly without
 
 The plugin sets `status-interval` to `@claude-tracker-status-interval` (default 5s) on load, but only lowers it — never overrides a user's shorter custom interval. This ensures the blocked timer refreshes periodically while respecting user preferences.
 
-### Asymmetric transition latency
+### Known upstream limitations
 
-`blocked → working` (PostToolUse) feels faster than `working → blocked` (Notification) despite identical script execution times. The delay is upstream in Claude Code — there is a gap between when Claude decides it needs permission and when it fires the Notification hook. This is outside the tracker's control.
+The tracker processes hooks in ~77ms. Perceived latency comes from Claude Code's hook dispatch:
+
+**Notification hook delay (blocked detection):** The `Notification` hook has a confirmed multi-second delay (1-45s) between Claude needing permission and firing the hook. This makes blocked detection feel slow or intermittent. The gap is inside Claude Code's event-to-hook invocation pipeline, not in script execution. Reported in Claude Code issues [#19627](https://github.com/anthropics/claude-code/issues/19627), [#23383](https://github.com/anthropics/claude-code/issues/23383), [#5186](https://github.com/anthropics/claude-code/issues/5186). No fix available — this is outside the tracker's control.
+
+**PostToolUse reliability:** PostToolUse hooks sometimes never fire at all ([#6305](https://github.com/anthropics/claude-code/issues/6305)). When this happens, the session stays `idle` after `SessionStart` because no hook transitions it to `working`. Subsequent `Notification` hooks are then dropped by the `status='working'` guard, causing missed blocked detection.
+
+**Asymmetric transition latency:** `blocked -> working` (PostToolUse) feels faster than `working -> blocked` (Notification) despite identical script execution times. This is entirely due to the upstream Notification delay described above.
+
+**Stop hook:** Most reliable and lowest-latency of all hooks. Completed detection is not affected by upstream issues.
+
+**No timing guarantees:** Claude Code provides no SLA on hook dispatch latency. The <100ms expectation is a user-stated desired behavior, not an official guarantee.
 
 ### What was eliminated
 
@@ -268,7 +301,15 @@ Skips CLI/DB/tmux.conf setup, only configures Claude Code hooks. Used after TPM 
 bats tests/
 ```
 
-Tests use a mock tmux environment and isolated temp DB. See `tests/helpers.bash` for setup.
+Two test suites:
+
+- **`tests/tracker.bats`** (~110 tests): Unit tests with mocked tmux. Each test gets a fresh temp DB via `setup_test_env`. Tests source tracker functions directly (stripping shebang/main) via `source_tracker_functions`. Tmux calls are stubbed to no-ops or value captures.
+- **`tests/integration.bats`** (~20 tests): End-to-end tests that invoke `tracker.sh` as a subprocess, piping real hook JSON on stdin. Tests concurrent hooks, parallel session creation, and cache consistency. Use a leak guard that fails if the production DB is modified.
+
+Key test helpers (`tests/helpers.bash`):
+- `insert_session`: Direct SQL insert with optional status, pane, timestamp
+- `source_tracker_functions`: Evals tracker.sh with mocked externals (tmux, git, load_config)
+- `count_status` / `get_status` / `count_sessions`: Query helpers
 
 ## Database Schema
 
@@ -298,10 +339,16 @@ tmux-claude-agent-tracker/
 │   ├── helpers.sh               # Config loading, tmux helpers
 │   └── tracker.sh               # Core: hook, menu, status-bar, goto
 ├── tests/
-│   ├── tracker.bats             # BATS test suite
-│   └── helpers.bash             # Test helpers, DB setup, mocks
+│   ├── tracker.bats             # Unit tests (mocked tmux)
+│   ├── integration.bats         # End-to-end tests (real subprocess)
+│   ├── helpers.bash             # Unit test helpers, DB setup, mocks
+│   └── integration_helpers.bash # Integration test helpers, leak guard
 ├── install.sh                   # TPM + manual install
 ├── uninstall.sh                 # Full artifact removal
-└── bin/
-    └── tmux-claude-agent-tracker    # Wrapper -> scripts/tracker.sh
+├── bin/
+│   ├── tmux-claude-agent-tracker    # CLI wrapper -> scripts/tracker.sh
+│   └── claude-agent-tracker         # Short alias wrapper
+└── .claude/skills/
+    └── tmux-claude-agent-tracker/
+        └── SKILL.md             # Claude Code skill reference (copied to ~/.claude/skills/)
 ```
