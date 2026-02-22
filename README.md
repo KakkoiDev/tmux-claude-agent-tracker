@@ -256,8 +256,8 @@ set -g @claude-tracker-on-blocked 'afplay /System/Library/Sounds/Glass.aiff'
 #      echo "claude-$(openssl rand -hex 4)"
 # 3. Subscribe to that topic in the ntfy app
 # 4. Add hooks (replace MY_TOPIC with your topic name):
-set -g @claude-tracker-on-blocked '/usr/bin/curl -s -d "Blocked: $5" ntfy.sh/MY_TOPIC'
-set -g @claude-tracker-on-completed '/usr/bin/curl -s -d "Completed: $5" ntfy.sh/MY_TOPIC'
+set -g @claude-tracker-on-blocked '/usr/bin/curl -s -d "[$4] Blocked: $5" ntfy.sh/MY_TOPIC'
+set -g @claude-tracker-on-completed '/usr/bin/curl -s -d "[$4] Completed: $5" ntfy.sh/MY_TOPIC'
 ```
 
 ### Phone Push Notifications (ntfy.sh)
