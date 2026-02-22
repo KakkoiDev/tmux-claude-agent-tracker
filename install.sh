@@ -56,6 +56,16 @@ else
     echo "tmux.conf: already configured"
 fi
 
+# ── install skill file ────────────────────────────────────────────────
+
+SKILL_SRC="$SCRIPT_DIR/.claude/skills/tmux-claude-agent-tracker/SKILL.md"
+SKILL_DEST="$HOME/.claude/skills/tmux-claude-agent-tracker/SKILL.md"
+if [[ -f "$SKILL_SRC" ]]; then
+    mkdir -p "$(dirname "$SKILL_DEST")"
+    cp -f "$SKILL_SRC" "$SKILL_DEST"
+    echo "Skill: $SKILL_DEST"
+fi
+
 fi  # end !HOOKS_ONLY
 
 # ── configure Claude Code hooks ──────────────────────────────────────

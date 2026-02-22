@@ -168,6 +168,10 @@ Multiple concurrent hook processes. WAL mode handles this:
 | SessionEnd | any -> (deleted) | unconditional |
 | TeammateIdle | any -> idle | unconditional |
 
+**Why `PostToolUseFailure`?** Claude Code's `Stop` hook does not fire on user interrupt. If a user rejects a permission prompt and interrupts, the session stays stuck at `blocked` with no hook to clear it. `PostToolUseFailure` fires on tool rejection/failure and transitions `blocked` back to `working`, where `_reap_dead` can clean up.
+
+**Why `permission_prompt|elicitation_dialog` matcher on Notification?** The `Notification` hook fires for multiple types: `permission_prompt`, `elicitation_dialog`, `idle_prompt`, `auth_success`. Both `permission_prompt` and `elicitation_dialog` mean Claude is waiting for user input. Without the filter, an `idle_prompt` notification would incorrectly show the session as blocked.
+
 ## Configurable Icons
 
 Status icons are configurable via tmux options:
@@ -212,6 +216,60 @@ When `HOOK_ON_BLOCKED` is set, the built-in `_play_sound` is skipped — the use
 - `cmd_hook` — after render, before returning. Compares `__old_status` (captured by each `_hook_*` function) against the new status.
 - `cmd_goto` / `cmd_pane_focus` — fires `completed -> idle` after UPDATE.
 
+## Commands
+
+| Command | Purpose |
+|---------|---------|
+| `tmux-claude-agent-tracker init` | Create DB |
+| `tmux-claude-agent-tracker hook <event>` | Handle Claude hook (stdin JSON) |
+| `tmux-claude-agent-tracker status-bar` | Output cached status string |
+| `tmux-claude-agent-tracker refresh` | Re-render from DB, update tmux option (no output) |
+| `tmux-claude-agent-tracker menu [page]` | Show agent menu |
+| `tmux-claude-agent-tracker goto <target>` | Jump to pane |
+| `tmux-claude-agent-tracker pane-focus <pane_id>` | Clear completed status on focused pane |
+| `tmux-claude-agent-tracker scan` | Discover untracked Claude processes via pgrep |
+| `tmux-claude-agent-tracker cleanup` | Remove stale sessions |
+
+## Install Architecture
+
+Three install paths, all converge on the same result:
+
+### Manual (`./install.sh`)
+
+Full setup: CLI symlinks + DB init + tmux.conf line + Claude Code hooks + skill file.
+
+### TPM (`prefix + I`)
+
+TPM clones the repo and runs `claude-tracker.tmux`. The `.tmux` entry point auto-provisions:
+- CLI symlinks (idempotent, only recreated if missing or pointing elsewhere)
+- Skill file (only copied if source differs from destination via `cmp -s`)
+- DB init
+
+User only needs one manual step: `./install.sh --hooks-only` to configure Claude Code hooks in `~/.claude/settings.json`.
+
+### Hooks-only (`./install.sh --hooks-only`)
+
+Skips CLI/DB/tmux.conf setup, only configures Claude Code hooks. Used after TPM install or to re-run hook configuration.
+
+## Uninstall
+
+`./uninstall.sh` reverses all install artifacts:
+
+1. CLI symlinks (`~/.local/bin/tmux-claude-agent-tracker`, `claude-agent-tracker`)
+2. tmux.conf plugin lines (comment + run-shell line)
+3. Claude Code hooks (jq filter removes entries matching `tmux-claude-agent-tracker`)
+4. Skill file (`~/.claude/skills/tmux-claude-agent-tracker/`)
+5. Data directory (`~/.tmux-claude-agent-tracker/`)
+6. Live tmux state: status-right injection, tmux hooks, options, key binding
+
+## Testing
+
+```bash
+bats tests/
+```
+
+Tests use a mock tmux environment and isolated temp DB. See `tests/helpers.bash` for setup.
+
 ## Database Schema
 
 ```sql
@@ -243,6 +301,7 @@ tmux-claude-agent-tracker/
 │   ├── tracker.bats             # BATS test suite
 │   └── helpers.bash             # Test helpers, DB setup, mocks
 ├── install.sh                   # TPM + manual install
+├── uninstall.sh                 # Full artifact removal
 └── bin/
     └── tmux-claude-agent-tracker    # Wrapper -> scripts/tracker.sh
 ```

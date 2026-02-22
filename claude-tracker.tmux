@@ -13,6 +13,26 @@ load_config
 # Init DB if needed
 "$SCRIPTS_DIR/tracker.sh" init 2>/dev/null
 
+# ── Idempotent CLI + skill setup (TPM auto-provisioning) ─────────────
+_link_if_stale() {
+    local target="$1" link="$2"
+    [[ "$(readlink "$link" 2>/dev/null)" == "$target" ]] && return
+    mkdir -p "$(dirname "$link")"
+    ln -sf "$target" "$link"
+}
+
+_link_if_stale "$CURRENT_DIR/bin/tmux-claude-agent-tracker" "$HOME/.local/bin/tmux-claude-agent-tracker"
+_link_if_stale "$CURRENT_DIR/bin/claude-agent-tracker" "$HOME/.local/bin/claude-agent-tracker"
+
+SKILL_SRC="$CURRENT_DIR/.claude/skills/tmux-claude-agent-tracker/SKILL.md"
+SKILL_DEST="$HOME/.claude/skills/tmux-claude-agent-tracker/SKILL.md"
+if [[ -f "$SKILL_SRC" ]]; then
+    if ! cmp -s "$SKILL_SRC" "$SKILL_DEST" 2>/dev/null; then
+        mkdir -p "$(dirname "$SKILL_DEST")"
+        cp -f "$SKILL_SRC" "$SKILL_DEST"
+    fi
+fi
+
 # Bind menu key
 tmux bind-key "$KEYBINDING" run-shell "$SCRIPTS_DIR/tracker.sh menu"
 

@@ -64,6 +64,7 @@ The install script:
 2. Initializes the SQLite database
 3. Adds the plugin to `~/.tmux.conf`
 4. Configures Claude Code hooks in `~/.claude/settings.json` (requires `jq`)
+5. Copies the Claude Code skill file to `~/.claude/skills/`
 
 If `jq` is not installed, the script prints the hook JSON for manual configuration.
 
@@ -73,51 +74,19 @@ If `jq` is not installed, the script prints the hook JSON for manual configurati
 set -g @plugin 'KakkoiDev/tmux-claude-agent-tracker'
 ```
 
-Then `prefix + I` to install. After TPM installs the plugin, run the hook installer:
+Then `prefix + I` to install. TPM runs `claude-tracker.tmux` which automatically provisions CLI symlinks and the skill file. You only need to run the hook installer once:
 
 ```bash
 ~/.tmux/plugins/tmux-claude-agent-tracker/install.sh --hooks-only
 ```
 
-### Claude Code Hooks
-
-`./install.sh` automatically adds the required hooks to `~/.claude/settings.json`. To re-run just the hook configuration:
+## Uninstall
 
 ```bash
-./install.sh --hooks-only
+cd ~/.tmux/plugins/tmux-claude-agent-tracker && ./uninstall.sh
 ```
 
-If you need to add them manually:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook SessionStart" }] }],
-    "SessionEnd": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook SessionEnd" }] }],
-    "UserPromptSubmit": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook UserPromptSubmit" }] }],
-    "PostToolUse": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook PostToolUse" }] }],
-    "PostToolUseFailure": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook PostToolUseFailure" }] }],
-    "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Stop" }] }],
-    "Notification": [{ "matcher": "permission_prompt|elicitation_dialog", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Notification" }] }]
-  }
-}
-```
-
-### Hook Reference
-
-| Hook | Fires when | Tracker action |
-|------|-----------|----------------|
-| `SessionStart` | Session begins or resumes | Create session row as idle |
-| `UserPromptSubmit` | User sends a message | Set working |
-| `PostToolUse` | Tool call succeeds | Set working (no-op if already) |
-| `PostToolUseFailure` | Tool call fails or user rejects | Set working (clears stuck blocked state) |
-| `Notification` | Permission prompt or elicitation dialog shown | Set blocked |
-| `Stop` | Claude finishes responding | Set completed |
-| `SessionEnd` | Session terminates | Delete session row |
-
-**Why `PostToolUseFailure`?** Claude Code's `Stop` hook does not fire on user interrupt. If a user rejects a permission prompt and interrupts, the session stays stuck at `blocked` with no hook to clear it. `PostToolUseFailure` fires on tool rejection/failure and transitions `blocked` back to `working`, where `_reap_dead` can clean up.
-
-**Why `permission_prompt|elicitation_dialog` matcher on Notification?** The `Notification` hook fires for multiple types: `permission_prompt`, `elicitation_dialog`, `idle_prompt`, `auth_success`. Both `permission_prompt` and `elicitation_dialog` mean Claude is waiting for user input. Without the filter, an `idle_prompt` notification would incorrectly show the session as blocked.
+Removes all artifacts: CLI symlinks, tmux.conf lines, Claude Code hooks, skill file, data directory, and live tmux state.
 
 ## Configuration
 
@@ -191,34 +160,6 @@ Run shell commands when an agent changes state. Each command receives 4 argument
 ```bash
 set -g @claude-tracker-on-blocked 'notify-send "Claude blocked" "Agent in $4 needs attention"'
 set -g @claude-tracker-on-completed 'paplay /usr/share/sounds/complete.oga'
-```
-
-**Migrating from `@claude-tracker-sound`:** If you used `@claude-tracker-sound 1` for blocked notifications, switch to `@claude-tracker-on-blocked` for more control:
-
-```bash
-# Before
-set -g @claude-tracker-sound '1'
-
-# After
-set -g @claude-tracker-on-blocked 'paplay /usr/share/sounds/freedesktop/stereo/complete.oga'
-```
-
-## Commands
-
-| Command | Purpose |
-|---------|---------|
-| `tmux-claude-agent-tracker init` | Create DB |
-| `tmux-claude-agent-tracker hook <event>` | Handle Claude hook (stdin JSON) |
-| `tmux-claude-agent-tracker status-bar` | Output cached status string |
-| `tmux-claude-agent-tracker refresh` | Re-render from DB, update tmux option (no output) |
-| `tmux-claude-agent-tracker menu [page]` | Show agent menu |
-| `tmux-claude-agent-tracker goto <target>` | Jump to pane |
-| `tmux-claude-agent-tracker cleanup` | Remove stale sessions |
-
-## Testing
-
-```bash
-bats tests/
 ```
 
 ## License
