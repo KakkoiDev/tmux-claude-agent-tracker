@@ -618,9 +618,10 @@ cmd_goto() {
     _goto_sid=$(sql "SELECT session_id FROM sessions
          WHERE tmux_target='$(sql_esc "$target")' AND status='completed' LIMIT 1;") || true
     if [[ -n "$_goto_sid" ]]; then
+        _load_config_fast
+        _debug_log "goto target=$target sid=$_goto_sid via=menu"
         sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
              WHERE session_id='$(sql_esc "$_goto_sid")' AND status='completed';" 2>/dev/null || true
-        _load_config_fast
         _goto_project=$(sql "SELECT project_name FROM sessions WHERE session_id='$(sql_esc "$_goto_sid")';") || true
         _fire_transition_hook "completed" "idle" "$_goto_sid" "$_goto_project"
     fi
@@ -637,11 +638,13 @@ cmd_pane_focus() {
     _focus_sids=$(sql "SELECT session_id FROM sessions
          WHERE tmux_pane='$(sql_esc "$pane_id")' AND status='completed';") || true
     [[ -z "$_focus_sids" ]] && return 0
+    _load_config_fast
+    _debug_log "pane_focus pane=$pane_id via=focus"
     sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
          WHERE tmux_pane='$(sql_esc "$pane_id")' AND status='completed';"
-    _load_config_fast
     while IFS= read -r _fsid; do
         [[ -z "$_fsid" ]] && continue
+        _debug_log "pane_focus_clear sid=$_fsid completed->idle"
         local _fproject
         _fproject=$(sql "SELECT project_name FROM sessions WHERE session_id='$(sql_esc "$_fsid")';") || true
         _fire_transition_hook "completed" "idle" "$_fsid" "$_fproject"
@@ -657,7 +660,13 @@ cmd_pane_focus_if_active() {
     local pane_id="$1"
     local active_pane
     active_pane=$(tmux display-message -p '#{pane_id}' 2>/dev/null) || return 0
-    [[ "$active_pane" == "$pane_id" ]] || return 0
+    if [[ "$active_pane" != "$pane_id" ]]; then
+        _load_config_fast
+        _debug_log "pane_focus_if_active pane=$pane_id active=$active_pane skip=not_focused"
+        return 0
+    fi
+    _load_config_fast
+    _debug_log "pane_focus_if_active pane=$pane_id active=$active_pane via=deferred_timer"
     cmd_pane_focus "$pane_id"
 }
 
