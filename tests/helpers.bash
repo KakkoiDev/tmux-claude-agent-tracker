@@ -103,6 +103,16 @@ source_tracker_functions() {
     sed "s|^SCRIPTS_DIR=.*|SCRIPTS_DIR=\"$SCRIPTS_DIR\"|")"
 }
 
+# Wait for a file to appear (polling, max 2s)
+wait_for_file() {
+    local f="$1" i=0
+    while [[ ! -f "$f" && "$i" -lt 20 ]]; do
+        sleep 0.1
+        i=$((i + 1))
+    done
+    [[ -f "$f" ]]
+}
+
 # Count sessions by status
 count_status() {
     sql "SELECT COUNT(*) FROM sessions WHERE status='$1';"

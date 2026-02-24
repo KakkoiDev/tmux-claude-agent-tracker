@@ -1099,8 +1099,7 @@ echo "$1 $2 $3 $4" >> "${0%/*}/hook.log"
 SCRIPT
     chmod +x "$HOOK_ON_WORKING"
     _fire_transition_hook "idle" "working" "s1" "myproject"
-    sleep 0.2
-    [[ -f "$_hook_log" ]]
+    wait_for_file "$_hook_log"
     [[ "$(cat "$_hook_log")" == "idle working s1 myproject" ]]
 }
 
@@ -1115,8 +1114,7 @@ echo "\$1 \$2 \$3 \$4" >> "$_hook_log"
 SCRIPT
     chmod +x "$HOOK_ON_TRANSITION"
     _fire_transition_hook "idle" "working" "s1" "myproject"
-    sleep 0.2
-    [[ -f "$_hook_log" ]]
+    wait_for_file "$_hook_log"
     [[ "$(cat "$_hook_log")" == "idle working s1 myproject" ]]
 }
 
@@ -1132,8 +1130,7 @@ SCRIPT
     insert_session "s1" "working" "%1"
     sql "UPDATE sessions SET project_name='myproject' WHERE session_id='s1';"
     echo '{"session_id":"s1","notification_type":"permission_prompt"}' | cmd_hook "Notification"
-    sleep 0.2
-    [[ -f "$_hook_log" ]]
+    wait_for_file "$_hook_log"
     [[ "$(cat "$_hook_log")" == "working blocked s1 myproject" ]]
 }
 
@@ -1149,8 +1146,7 @@ SCRIPT
     insert_session "s1" "blocked" "%1"
     sql "UPDATE sessions SET project_name='myproject' WHERE session_id='s1';"
     echo '{"session_id":"s1","tool_name":"Read"}' | cmd_hook "PostToolUse"
-    sleep 0.2
-    [[ -f "$_hook_log" ]]
+    wait_for_file "$_hook_log"
     [[ "$(cat "$_hook_log")" == "blocked working s1 myproject" ]]
 }
 
@@ -1181,8 +1177,7 @@ SCRIPT
     insert_session "s1" "working" "%1"
     sql "UPDATE sessions SET project_name='myproject' WHERE session_id='s1';"
     echo '{"session_id":"s1"}' | cmd_hook "Stop"
-    sleep 0.2
-    [[ -f "$_hook_log" ]]
+    wait_for_file "$_hook_log"
     [[ "$(cat "$_hook_log")" == "working completed s1 myproject" ]]
 }
 
@@ -1198,8 +1193,7 @@ SCRIPT
     insert_session "s1" "completed" "%1"
     sql "UPDATE sessions SET tmux_target='test:0.0', project_name='myproject' WHERE session_id='s1';"
     cmd_goto "test:0.0"
-    sleep 0.2
-    [[ -f "$_hook_log" ]]
+    wait_for_file "$_hook_log"
     [[ "$(cat "$_hook_log")" == "completed idle s1 myproject" ]]
 }
 
@@ -1215,8 +1209,7 @@ SCRIPT
     insert_session "s1" "completed" "%1"
     sql "UPDATE sessions SET project_name='myproject' WHERE session_id='s1';"
     cmd_pane_focus "%1"
-    sleep 0.2
-    [[ -f "$_hook_log" ]]
+    wait_for_file "$_hook_log"
     [[ "$(cat "$_hook_log")" == "completed idle s1 myproject" ]]
 }
 
