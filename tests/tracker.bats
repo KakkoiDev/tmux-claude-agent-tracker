@@ -48,6 +48,44 @@ teardown() {
     [[ "$before" == "$after" ]]
 }
 
+@test "Stop schedules deferred pane-focus-if-active when TMUX_PANE is set" {
+    insert_session "s1" "working" "%1"
+    export TMUX_PANE="%1"
+    local _tmux_cmds=""
+    tmux() {
+        _tmux_cmds+="$* "
+        true
+    }
+    _hook_stop "s1"
+    [[ "$(get_status s1)" == "completed" ]]
+    [[ "$_tmux_cmds" == *"pane-focus-if-active"* ]]
+}
+
+@test "pane-focus-if-active clears when pane is focused" {
+    insert_session "s1" "completed" "%1"
+    tmux() {
+        case "$1" in
+            display-message) echo "%1" ;;
+            *) true ;;
+        esac
+    }
+    load_config() { true; }
+    cmd_pane_focus_if_active "%1"
+    [[ "$(get_status s1)" == "idle" ]]
+}
+
+@test "pane-focus-if-active is no-op when pane is not focused" {
+    insert_session "s1" "completed" "%1"
+    tmux() {
+        case "$1" in
+            display-message) echo "%2" ;;
+            *) true ;;
+        esac
+    }
+    cmd_pane_focus_if_active "%1"
+    [[ "$(get_status s1)" == "completed" ]]
+}
+
 @test "Notification sets working to blocked" {
     insert_session "s1" "working" "%1"
     _hook_notification "s1" '{}'

@@ -233,6 +233,11 @@ _hook_stop() {
     __old_status=$(sql "SELECT status FROM sessions WHERE session_id='$sid';")
     sql "UPDATE sessions SET status='completed', updated_at=unixepoch()
          WHERE session_id='$sid' AND status IN ('working', 'blocked');"
+    # Deferred clear: after 3s, clear completed only if user is focused on this pane.
+    # Avoids the 15-60s wait for cmd_refresh when already watching the agent.
+    if [[ -n "${TMUX_PANE:-}" ]]; then
+        tmux run-shell -b "sleep 3 && $SCRIPTS_DIR/tracker.sh pane-focus-if-active $TMUX_PANE" 2>/dev/null || true
+    fi
 }
 
 # Hot path: SELECT old status + UPDATE + render in one sqlite3 call
@@ -616,6 +621,17 @@ cmd_pane_focus() {
     tmux refresh-client -S 2>/dev/null || true
 }
 
+# Like pane-focus, but only clears if the user is actually on this pane.
+# Called from deferred Stop hook to avoid clearing completed when user is elsewhere.
+cmd_pane_focus_if_active() {
+    [[ -f "$DB" ]] || return 0
+    local pane_id="$1"
+    local active_pane
+    active_pane=$(tmux display-message -p '#{pane_id}' 2>/dev/null) || return 0
+    [[ "$active_pane" == "$pane_id" ]] || return 0
+    cmd_pane_focus "$pane_id"
+}
+
 # ── main ──────────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -626,6 +642,7 @@ case "${1:-}" in
     menu)       tmux display-message "Opening..." 2>/dev/null || true; _reap_dead 2>/dev/null || true; cmd_scan 2>/dev/null || true; cmd_menu "${2:-1}" ;;
     goto)       cmd_goto "${2:?Usage: tracker.sh goto <target>}" ;;
     pane-focus) cmd_pane_focus "${2:?Usage: tracker.sh pane-focus <pane_id>}" ;;
+    pane-focus-if-active) cmd_pane_focus_if_active "${2:?Usage: tracker.sh pane-focus-if-active <pane_id>}" ;;
     scan)       cmd_scan ;;
     cleanup)    cmd_cleanup ;;
     *)          echo "Usage: tracker.sh {init|hook|status-bar|refresh|menu|scan|cleanup|goto|pane-focus}" >&2
