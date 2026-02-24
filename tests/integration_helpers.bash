@@ -3,6 +3,7 @@
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TRACKER_SH="$PROJECT_ROOT/scripts/tracker.sh"
+source "$PROJECT_ROOT/scripts/helpers.sh"
 
 # ── Per-test isolation ───────────────────────────────────────────────
 
@@ -143,5 +144,5 @@ read_cache() {
 }
 
 cache_mtime() {
-    [[ -f "$CACHE" ]] && stat -c %Y "$CACHE" 2>/dev/null || echo "0"
+    [[ -f "$CACHE" ]] && _file_mtime "$CACHE" 2>/dev/null || echo "0"
 }

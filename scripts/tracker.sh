@@ -34,7 +34,7 @@ _RENDER_SQL="SELECT
 _fire_transition_hook() {
     local from="$1" to="$2" sid="$3" project="$4"
     [[ "${_HAS_HOOKS:-0}" == "0" ]] && return 0
-    local hook_var="HOOK_ON_${to^^}"
+    local hook_var="HOOK_ON_$(printf '%s' "$to" | tr '[:lower:]' '[:upper:]')"
     local cmd="${!hook_var:-}"
     [[ -n "$cmd" ]] && ($cmd "$from" "$to" "$sid" "$project" &) 2>/dev/null
     [[ -n "${HOOK_ON_TRANSITION:-}" ]] && ($HOOK_ON_TRANSITION "$from" "$to" "$sid" "$project" &) 2>/dev/null
