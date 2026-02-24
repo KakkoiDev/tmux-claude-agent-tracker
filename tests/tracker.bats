@@ -1305,6 +1305,43 @@ SCRIPT
     [[ -z "$(get_status t1)" ]]
 }
 
+# ── Debug logging ─────────────────────────────────────────────────
+
+@test "_debug_log writes to debug.log when DEBUG_LOG=1" {
+    export DEBUG_LOG="1"
+    _debug_log "test event sid=s1"
+    [[ -f "$TRACKER_DIR/debug.log" ]]
+    [[ "$(cat "$TRACKER_DIR/debug.log")" == *"test event sid=s1"* ]]
+}
+
+@test "_debug_log is no-op when DEBUG_LOG=0" {
+    export DEBUG_LOG="0"
+    _debug_log "should not appear"
+    [[ ! -f "$TRACKER_DIR/debug.log" ]]
+}
+
+@test "_debug_log auto-truncates at 1500 lines" {
+    export DEBUG_LOG="1"
+    local _log="$TRACKER_DIR/debug.log"
+    # Write 1501 lines directly
+    for i in $(seq 1 1501); do
+        echo "2026-01-01 00:00:00 line $i" >> "$_log"
+    done
+    # Trigger truncation via _debug_log
+    _debug_log "trigger truncation"
+    local lc
+    lc=$(wc -l < "$_log")
+    [[ "$lc" -le 1001 ]]
+}
+
+@test "cmd_hook logs event entry when DEBUG_LOG=1" {
+    export DEBUG_LOG="1"
+    insert_session "s1" "working" "%1"
+    echo '{"session_id":"s1"}' | cmd_hook "PostToolUse"
+    [[ -f "$TRACKER_DIR/debug.log" ]]
+    [[ "$(cat "$TRACKER_DIR/debug.log")" == *"HOOK PostToolUse sid=s1"* ]]
+}
+
 @test "integration: TeammateIdle hides session from render" {
     _integration_mock "%1"
     echo '{"session_id":"s1","cwd":"/tmp/test"}' | cmd_hook "SessionStart"

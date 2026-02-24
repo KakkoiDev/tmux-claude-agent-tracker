@@ -15,6 +15,19 @@ sql() { printf '.timeout 100\n%s\n' "$*" | sqlite3 "$DB"; }
 sql_sep() { local s="$1"; shift; printf '.timeout 100\n%s\n' "$*" | sqlite3 -separator "$s" "$DB"; }
 sql_esc() { local q="'"; printf '%s' "${1//$q/$q$q}"; }
 
+# ── debug logging ────────────────────────────────────────────────────
+
+_debug_log() {
+    [[ "${DEBUG_LOG:-0}" == "1" ]] || return 0
+    local _log="$TRACKER_DIR/debug.log"
+    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$_log"
+    local _lc
+    _lc=$(wc -l < "$_log" 2>/dev/null) || return 0
+    if [[ "${_lc:-0}" -gt 1500 ]]; then
+        tail -n 1000 "$_log" > "$_log.tmp" && mv -f "$_log.tmp" "$_log"
+    fi
+}
+
 # Fast JSON value extraction — replaces jq for simple key lookups
 _json_val() {
     local _t="${1#*\"$2\":\"}"
@@ -83,6 +96,8 @@ cmd_hook() {
     sid=$(_json_val "$json" "session_id")
     [[ -z "$sid" ]] && return 0
     sid=$(sql_esc "$sid")
+
+    _debug_log "HOOK $event sid=$sid"
 
     # _ensure_session only for session-creating hooks.
     # Hot-path hooks (PostToolUse, PostToolUseFailure, Notification, Stop, TeammateIdle) skip this
@@ -204,6 +219,7 @@ _ensure_session() {
 _hook_prompt() {
     local sid="$1"
     __old_status=$(sql "SELECT status FROM sessions WHERE session_id='$sid';")
+    _debug_log "prompt sid=$sid old=$__old_status"
     sql "UPDATE sessions SET status='working', updated_at=unixepoch()
          WHERE session_id='$sid';"
 }
@@ -225,12 +241,14 @@ _hook_post_tool() {
         __old_status="$_result"
         __render=""
     fi
+    _debug_log "post_tool sid=$sid old=$__old_status changed=$([ -n "$__render" ] && echo y || echo n)"
     if [[ -z "$__render" ]]; then __changed=0; fi
 }
 
 _hook_stop() {
     local sid="$1"
     __old_status=$(sql "SELECT status FROM sessions WHERE session_id='$sid';")
+    _debug_log "stop sid=$sid old=$__old_status"
     sql "UPDATE sessions SET status='completed', updated_at=unixepoch()
          WHERE session_id='$sid' AND status IN ('working', 'blocked');"
     # Deferred clear: clear completed only if user is focused on this pane.
@@ -265,6 +283,7 @@ _hook_notification() {
         __old_status="$_result"
         __render=""
     fi
+    _debug_log "notification sid=$sid type=$ntype old=$__old_status changed=$([ -n "$__render" ] && echo y || echo n)"
     if [[ -z "$__render" ]]; then __changed=0; fi
 }
 
@@ -277,6 +296,7 @@ _hook_teammate_idle() {
     local raw_tid="$tid"
     tid=$(sql_esc "$tid")
     __old_status=$(sql "SELECT status FROM sessions WHERE session_id='$tid';")
+    _debug_log "teammate_idle tid=$raw_tid old=$__old_status"
     sql "UPDATE sessions SET status='idle', agent_type='teammate', updated_at=unixepoch()
          WHERE session_id='$tid';"
     __teammate_sid="$raw_tid"
@@ -343,6 +363,7 @@ _render_cache() {
                   WHERE status='blocked' AND COALESCE(agent_type,'')!='teammate'),0)
         FROM sessions WHERE COALESCE(agent_type,'')!='teammate';") || return 0
     [[ -z "$counts" ]] && counts="0|0|0|0|0"
+    _debug_log "render counts=$counts"
 
     local project=""
     if [[ "${SHOW_PROJECT:-0}" == "1" ]]; then
@@ -484,11 +505,13 @@ _reap_dead() {
         [[ -z "$sid" ]] && continue
         # Dead pane → always delete
         if ! printf '%s' "$alive_panes" | grep -qx "$pane"; then
+            _debug_log "reap sid=$sid reason=dead_pane"
             sql "DELETE FROM sessions WHERE session_id='$sid';"
             changed=1
         # Live pane, no claude process, working/blocked → delete (Ctrl+C case)
         elif [[ "$st" != "idle" && "$st" != "completed" ]] \
           && ! printf '%s' "$claude_panes" | grep -qx "$pane"; then
+            _debug_log "reap sid=$sid reason=no_claude"
             sql "DELETE FROM sessions WHERE session_id='$sid';"
             changed=1
         fi
