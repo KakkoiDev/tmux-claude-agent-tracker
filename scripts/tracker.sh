@@ -87,6 +87,7 @@ SQL
 
 cmd_hook() {
     [[ -f "$DB" ]] || return 0
+    _load_config_fast
     local event="$1"
     local json
     read -r json || true
