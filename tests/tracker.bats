@@ -1247,3 +1247,80 @@ SCRIPT
     _hook_prompt "s1"
     [[ "$__old_status" == "idle" ]]
 }
+
+# ── Teammate hiding ─────────────────────────────────────────────────
+
+@test "TeammateIdle sets agent_type to teammate" {
+    insert_session "t1" "working" "%1"
+    _hook_teammate_idle '{"teammate_id":"t1"}'
+    local atype
+    atype=$(sql "SELECT agent_type FROM sessions WHERE session_id='t1';")
+    [[ "$atype" == "teammate" ]]
+}
+
+@test "_render_cache excludes teammates from counts" {
+    insert_session "w1" "working" "%1"
+    insert_session "t1" "working" "%2"
+    sql "UPDATE sessions SET agent_type='teammate' WHERE session_id='t1';"
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    # Only 1 working (w1), not 2
+    [[ "$out" == *"1*"* ]]
+}
+
+@test "_render_cache excludes teammate idle from counts" {
+    insert_session "i1" "idle" "%1"
+    insert_session "t1" "idle" "%2"
+    sql "UPDATE sessions SET agent_type='teammate' WHERE session_id='t1';"
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    [[ "$out" == *"1."* ]]
+}
+
+@test "cmd_menu excludes teammates from total" {
+    insert_session "w1" "working" "%1"
+    insert_session "t1" "idle" "%2"
+    sql "UPDATE sessions SET agent_type='teammate' WHERE session_id='t1';"
+    local total
+    total=$(sql "SELECT COUNT(*) FROM sessions WHERE COALESCE(agent_type,'')!='teammate';")
+    [[ "$total" -eq 1 ]]
+}
+
+@test "_reap_dead still cleans up teammate sessions" {
+    insert_session "t1" "idle" "%99"
+    sql "UPDATE sessions SET agent_type='teammate' WHERE session_id='t1';"
+
+    # Mock: pane %99 is dead
+    tmux() {
+        case "$1" in
+            list-panes) echo "%10 1234" ;;
+            *) true ;;
+        esac
+    }
+    _has_claude_child() { return 0; }
+
+    _reap_dead
+    [[ -z "$(get_status t1)" ]]
+}
+
+@test "integration: TeammateIdle hides session from render" {
+    _integration_mock "%1"
+    echo '{"session_id":"s1","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
+    echo '{"session_id":"s1"}' | cmd_hook "UserPromptSubmit"
+    [[ "$(get_status s1)" == "working" ]]
+
+    # Teammate starts working
+    insert_session "t1" "working" "%2"
+    _render_cache
+    [[ "$(cat "$CACHE")" == *"2*"* ]]
+
+    # TeammateIdle fires — teammate hidden from display
+    echo '{"session_id":"s1","teammate_id":"t1"}' | cmd_hook "TeammateIdle"
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    [[ "$out" == *"1*"* ]]
+    [[ "$out" == *"0."* ]]
+}

@@ -28,8 +28,8 @@ _RENDER_SQL="SELECT
     COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END),0) || '|' ||
     COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0) || '|' ||
     COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0) || '|' ||
-    COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked'),0)
-    FROM sessions"
+    COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked' AND COALESCE(agent_type,'')!='teammate'),0)
+    FROM sessions WHERE COALESCE(agent_type,'')!='teammate'"
 
 _fire_transition_hook() {
     local from="$1" to="$2" sid="$3" project="$4"
@@ -277,7 +277,7 @@ _hook_teammate_idle() {
     local raw_tid="$tid"
     tid=$(sql_esc "$tid")
     __old_status=$(sql "SELECT status FROM sessions WHERE session_id='$tid';")
-    sql "UPDATE sessions SET status='idle', updated_at=unixepoch()
+    sql "UPDATE sessions SET status='idle', agent_type='teammate', updated_at=unixepoch()
          WHERE session_id='$tid';"
     __teammate_sid="$raw_tid"
 }
@@ -340,13 +340,14 @@ _render_cache() {
         COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0),
         COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0),
         COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions
-                  WHERE status='blocked'),0)
-        FROM sessions;") || return 0
+                  WHERE status='blocked' AND COALESCE(agent_type,'')!='teammate'),0)
+        FROM sessions WHERE COALESCE(agent_type,'')!='teammate';") || return 0
     [[ -z "$counts" ]] && counts="0|0|0|0|0"
 
     local project=""
     if [[ "${SHOW_PROJECT:-0}" == "1" ]]; then
         project=$(sql "SELECT project_name FROM sessions
+                       WHERE COALESCE(agent_type,'')!='teammate'
                        ORDER BY CASE WHEN status='blocked' THEN 0 ELSE 1 END,
                                 updated_at DESC LIMIT 1;" 2>/dev/null || true)
     fi
@@ -372,6 +373,7 @@ cmd_refresh() {
     grace="${grace:-15}"
     local has_stale_completed
     has_stale_completed=$(sql "SELECT 1 FROM sessions WHERE status='completed'
+         AND COALESCE(agent_type,'')!='teammate'
          AND updated_at <= unixepoch() - $grace LIMIT 1;")
     if [[ -n "$has_stale_completed" ]]; then
         tmux run-shell -b "$SCRIPTS_DIR/tracker.sh pane-focus #{pane_id}" 2>/dev/null || true
@@ -390,7 +392,7 @@ cmd_menu() {
 
     # Total count
     local total
-    total=$(sql "SELECT COUNT(*) FROM sessions;") || total=0
+    total=$(sql "SELECT COUNT(*) FROM sessions WHERE COALESCE(agent_type,'')!='teammate';") || total=0
     [[ "$total" -eq 0 ]] && { tmux display-message "No active Claude agents"; return; }
 
     # Pagination math
@@ -403,6 +405,7 @@ cmd_menu() {
     rows=$(sql_sep '|' "SELECT session_id, status, project_name,
                COALESCE(git_branch,''), COALESCE(tmux_target,'')
         FROM sessions
+        WHERE COALESCE(agent_type,'')!='teammate'
         ORDER BY CASE status
             WHEN 'blocked' THEN 0 WHEN 'completed' THEN 1 WHEN 'working' THEN 2 ELSE 3
         END, updated_at DESC
