@@ -44,6 +44,12 @@ No background daemon. No polling. Pure event-driven tracking.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
+## Platform Support
+
+- **macOS** and **Linux**
+- Claude Code **native binary** and **npm/node** installs
+- Bash 3.2+ (macOS default) and Bash 4+/5+ (Linux)
+
 ## Install
 
 ### Requirements
