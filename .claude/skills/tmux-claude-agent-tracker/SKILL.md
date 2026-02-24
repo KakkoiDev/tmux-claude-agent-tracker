@@ -38,6 +38,7 @@ All commands go through `tmux-claude-agent-tracker` (symlinked to `scripts/track
 | `menu [page]` | Show interactive agent menu |
 | `goto <target>` | Jump to a pane by tmux target (`session:window.pane`) |
 | `pane-focus <pane_id>` | Clear completed status on focused pane |
+| `pane-focus-if-active <pane_id>` | Clear completed only if pane is currently focused |
 | `scan` | Discover untracked Claude processes via pgrep |
 | `cleanup` | Remove stale sessions (>24h or dead panes) |
 
@@ -74,6 +75,7 @@ Set in `~/.tmux.conf` with `set -g @option value`.
 | `@claude-tracker-key-quit` | `q` | Quit menu key |
 | `@claude-tracker-show-project` | `0` | `1` to show project name in status |
 | `@claude-tracker-status-interval` | `60` | Blocked timer refresh interval (seconds) |
+| `@claude-tracker-completed-delay` | `3` | Seconds to show completed before auto-clear (`0` to disable) |
 
 ### Colors
 

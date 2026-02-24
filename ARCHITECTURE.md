@@ -69,15 +69,16 @@ Transition guards:
 
 ## Completed Auto-Clear
 
-Completed (`+`) auto-clears to idle when the user is viewing the pane. Three mechanisms:
+Completed (`+`) auto-clears to idle when the user is viewing the pane. Four mechanisms:
 
-1. **Navigation hooks** (immediate): `session-window-changed`, `window-pane-changed`, `client-session-changed` fire `cmd_pane_focus` which clears completed on the focused pane.
-2. **Menu goto** (immediate): `cmd_goto` clears completed when jumping to a pane.
-3. **Refresh cycle** (periodic): `cmd_refresh` spawns `pane-focus` for the active pane every `status-interval` seconds.
+1. **Deferred clear** (fast, ~3s): `_hook_stop` schedules `pane-focus-if-active` after `@claude-tracker-completed-delay` seconds (default 3). Only clears if the user is focused on the agent's pane. Set to `0` to disable.
+2. **Navigation hooks** (immediate): `session-window-changed`, `window-pane-changed`, `client-session-changed` fire `cmd_pane_focus` which clears completed on the focused pane.
+3. **Menu goto** (immediate): `cmd_goto` clears completed when jumping to a pane.
+4. **Refresh cycle** (periodic fallback): `cmd_refresh` spawns `pane-focus` for the active pane every `status-interval` seconds.
 
 ### Grace period
 
-The refresh-cycle auto-clear uses a grace period to prevent completed from being invisible. Without it, `cmd_refresh` would clear completed on the same refresh cycle it first rendered — the user would never see the `+` indicator.
+The refresh-cycle auto-clear (mechanism 4) uses a grace period to prevent completed from being invisible. Without it, `cmd_refresh` would clear completed on the same refresh cycle it first rendered — the user would never see the `+` indicator.
 
 The grace period works by checking `updated_at` against the current time:
 
@@ -88,7 +89,7 @@ SELECT 1 FROM sessions WHERE status='completed'
 
 `$grace` is read from tmux's `status-interval` (typically 15s). A completed session must have been in that state for at least one full refresh interval before `pane-focus` is triggered. This guarantees the `+` indicator is visible for at least one refresh cycle.
 
-Navigation hooks (mechanism 1-2) bypass the grace period — explicit user navigation always clears immediately.
+The deferred clear (mechanism 1) is the primary fast path — it handles the common case of watching an agent complete while focused on its pane. Navigation hooks (mechanism 2-3) bypass the grace period — explicit user navigation always clears immediately.
 
 ## Hook Performance
 
@@ -173,7 +174,7 @@ Sessions can leak (crashes, killed panes). Three cleanup mechanisms:
 2. **`_reap_dead`** (hook path, throttled to 30s): cross-references `tmux list-panes` with stored pane IDs, deletes dead ones
 3. **`cmd_cleanup`** (manual): deletes sessions older than 24h + dead pane check
 
-`_reap_dead` checks pane liveness via `tmux list-panes` and process inspection via `pgrep`. Working/blocked sessions on live panes without a claude child process are cleaned up (Ctrl+C case).
+`_reap_dead` checks pane liveness via `tmux list-panes` and process inspection via `_has_claude_child`. On Linux this uses `pgrep -P`; on macOS it falls back to `ps`-based lookup since macOS `pgrep -P` silently fails for processes that rename argv[0] (claude runs as node). Working/blocked sessions on live panes without a claude child process are cleaned up (Ctrl+C case).
 
 ## SQLite as IPC
 
@@ -256,6 +257,7 @@ A precomputed `_HAS_HOOKS` flag in the config cache. When no hooks configured: z
 | `tmux-claude-agent-tracker menu [page]` | Show agent menu |
 | `tmux-claude-agent-tracker goto <target>` | Jump to pane |
 | `tmux-claude-agent-tracker pane-focus <pane_id>` | Clear completed status on focused pane |
+| `tmux-claude-agent-tracker pane-focus-if-active <pane_id>` | Clear completed only if pane is currently focused |
 | `tmux-claude-agent-tracker scan` | Discover untracked Claude processes via pgrep |
 | `tmux-claude-agent-tracker cleanup` | Remove stale sessions |
 
