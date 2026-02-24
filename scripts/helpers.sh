@@ -17,6 +17,19 @@ _file_mtime() {
     esac
 }
 
+# Check if a shell process has a claude child.
+# macOS pgrep -P silently fails for processes that rename argv[0] (like claude/node),
+# so fall back to ps-based lookup on Darwin.
+_has_claude_child() {
+    local shell_pid="$1"
+    case "$(uname)" in
+        Darwin)
+            ps -eo pid,ppid,ucomm | awk -v p="$shell_pid" '$2 == p && ($3 == "claude" || $3 == "node")' | grep -q . ;;
+        *)
+            pgrep -P "$shell_pid" -x "claude" >/dev/null 2>/dev/null ;;
+    esac
+}
+
 # ── tmux option helpers ──────────────────────────────────────────────
 
 get_tmux_option() {

@@ -184,7 +184,7 @@ teardown() {
             *) true ;;
         esac
     }
-    pgrep() { return 0; }
+    _has_claude_child() { return 0; }
 
     _reap_dead
     [[ "$(get_status s1)" == "working" ]]
@@ -201,7 +201,7 @@ teardown() {
             *) true ;;
         esac
     }
-    pgrep() { return 0; }
+    _has_claude_child() { return 0; }
 
     _reap_dead
     [[ "$(count_sessions)" -eq 2 ]]
@@ -216,7 +216,7 @@ teardown() {
             *) true ;;
         esac
     }
-    pgrep() { return 0; }
+    _has_claude_child() { return 0; }
 
     _reap_dead
     [[ "$(count_sessions)" -eq 1 ]]
@@ -232,7 +232,7 @@ teardown() {
             *) true ;;
         esac
     }
-    pgrep() { return 1; }
+    _has_claude_child() { return 1; }
 
     _reap_dead
     [[ -z "$(get_status s1)" ]]
@@ -253,7 +253,7 @@ teardown() {
             *) true ;;
         esac
     }
-    pgrep() { return 0; }
+    _has_claude_child() { return 0; }
 
     _reap_dead
     [[ -z "$(get_status no-pane)" ]]
@@ -269,7 +269,7 @@ teardown() {
             *) true ;;
         esac
     }
-    pgrep() { return 0; }
+    _has_claude_child() { return 0; }
 
     _reap_dead
     [[ -f "$TRACKER_DIR/.last_reap" ]]
@@ -291,7 +291,7 @@ teardown() {
             *) true ;;
         esac
     }
-    pgrep() { return 1; }
+    _has_claude_child() { return 1; }
 
     _reap_dead
     [[ "$(get_status s1)" == "idle" ]]
@@ -749,7 +749,7 @@ teardown() {
 # ── Integration tests (full cmd_hook pipeline via stdin) ──────────────
 
 # Mock that handles all tmux subcommands correctly for integration tests.
-# _reap_dead calls list-panes and pgrep, so we need both.
+# _reap_dead calls list-panes and _has_claude_child, so we need both.
 _integration_mock() {
     local pane="${1:-%1}"
     export TMUX_PANE="$pane"
@@ -760,7 +760,7 @@ _integration_mock() {
             *) true ;;
         esac
     }
-    pgrep() { return 0; }
+    _has_claude_child() { return 0; }
 }
 
 @test "integration: SessionStart creates idle session" {
@@ -921,7 +921,7 @@ _integration_mock() {
             *) true ;;
         esac
     }
-    pgrep() { return 1; }
+    _has_claude_child() { return 1; }
 
     _reap_dead
     [[ "$(get_status s1)" == "completed" ]]
