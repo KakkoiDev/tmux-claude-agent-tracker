@@ -109,6 +109,7 @@ Set in `~/.tmux.conf`:
 | `@claude-tracker-key-quit` | `q` | Quit menu |
 | `@claude-tracker-show-project` | `0` | `1` to show project name |
 | `@claude-tracker-status-interval` | `60` | Blocked timer refresh (seconds) |
+| `@claude-tracker-completed-delay` | `3` | Seconds to show completed before auto-clear (`0` to disable) |
 
 ### Colors
 

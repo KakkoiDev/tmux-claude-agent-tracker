@@ -233,10 +233,12 @@ _hook_stop() {
     __old_status=$(sql "SELECT status FROM sessions WHERE session_id='$sid';")
     sql "UPDATE sessions SET status='completed', updated_at=unixepoch()
          WHERE session_id='$sid' AND status IN ('working', 'blocked');"
-    # Deferred clear: after 3s, clear completed only if user is focused on this pane.
+    # Deferred clear: clear completed only if user is focused on this pane.
     # Avoids the 15-60s wait for cmd_refresh when already watching the agent.
-    if [[ -n "${TMUX_PANE:-}" ]]; then
-        tmux run-shell -b "sleep 3 && $SCRIPTS_DIR/tracker.sh pane-focus-if-active $TMUX_PANE" 2>/dev/null || true
+    _load_config_fast
+    local delay="${COMPLETED_DELAY:-3}"
+    if [[ -n "${TMUX_PANE:-}" && "$delay" -gt 0 ]] 2>/dev/null; then
+        tmux run-shell -b "sleep $delay && $SCRIPTS_DIR/tracker.sh pane-focus-if-active $TMUX_PANE" 2>/dev/null || true
     fi
 }
 
