@@ -58,13 +58,16 @@ fi
 
 # ── install skill file ────────────────────────────────────────────────
 
-SKILL_SRC="$SCRIPT_DIR/.claude/skills/tmux-claude-agent-tracker/SKILL.md"
-SKILL_DEST="$HOME/.claude/skills/tmux-claude-agent-tracker/SKILL.md"
-if [[ -f "$SKILL_SRC" ]]; then
-    mkdir -p "$(dirname "$SKILL_DEST")"
-    cp -f "$SKILL_SRC" "$SKILL_DEST"
-    echo "Skill: $SKILL_DEST"
-fi
+for skill_dir in "$SCRIPT_DIR"/.claude/skills/tmux-claude-agent-tracker*; do
+    [[ -d "$skill_dir" ]] || continue
+    skill_name="$(basename "$skill_dir")"
+    skill_dest="$HOME/.claude/skills/$skill_name/SKILL.md"
+    if [[ -f "$skill_dir/SKILL.md" ]]; then
+        mkdir -p "$(dirname "$skill_dest")"
+        cp -f "$skill_dir/SKILL.md" "$skill_dest"
+        echo "Skill: $skill_dest"
+    fi
+done
 
 fi  # end !HOOKS_ONLY
 
