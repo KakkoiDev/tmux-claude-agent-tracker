@@ -226,6 +226,10 @@ tailscale ip        # 100.x.y.z address
 ssh localhost       # SSH works locally
 ```
 
+## Known Limitations
+
+Claude Code fires the `Notification` hook 4-41s (median ~11s) after the agent actually starts waiting for user input. This is an upstream delay in Claude Code's hook dispatch, not a tracker bug. The tracker processes each hook in ~77ms. No workaround exists since the tracker is purely event-driven and cannot poll Claude Code's internal state.
+
 ## License
 
 MIT

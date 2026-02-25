@@ -104,11 +104,12 @@ Key helpers in `tests/integration_helpers.bash`:
 
 ## Known Upstream Limitations (Claude Code)
 
-- **Notification hook delay**: 1-45s between Claude needing permission and firing hook
+- **Notification hook delay**: Measured 4-41s (median ~11s) between agent blocking and hook firing. Zero dropped notifications across 10 concurrent sessions. Entirely upstream.
 - **PostToolUse unreliability**: Sometimes never fires, session stays idle
 - **No timing guarantees**: Claude Code provides no SLA on hook dispatch latency
 - **Stop hook**: Most reliable and lowest-latency of all hooks
 - **PostToolUseFailure**: Added specifically to clear stuck `blocked` states from unreliable hooks
+- **No heuristic workaround**: "Assume blocked after N seconds of silence" would false-positive during LLM thinking (which can exceed 30s)
 
 ## Conventions
 
