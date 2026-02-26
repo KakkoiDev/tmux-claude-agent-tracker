@@ -79,7 +79,12 @@ TRACKER_EVENTS=(
     TaskCompleted
 )
 # Notification must match only permission_prompt or elicitation_dialog (user attention needed)
-TRACKER_MATCHERS=([Notification]="permission_prompt|elicitation_dialog")
+_get_matcher() {
+    case "$1" in
+        Notification) echo "permission_prompt|elicitation_dialog" ;;
+        *) echo "" ;;
+    esac
+}
 
 _print_manual_hooks() {
     cat <<'MANUAL_HOOKS'
@@ -116,7 +121,8 @@ install_hooks() {
         for event in "${TRACKER_EVENTS[@]}"; do
             $first || hooks_json+=","
             first=false
-            local matcher="${TRACKER_MATCHERS[$event]:-}"
+            local matcher
+            matcher=$(_get_matcher "$event")
             hooks_json+="\"$event\":[{\"matcher\":\"$matcher\",\"hooks\":[{\"type\":\"command\",\"command\":\"tmux-claude-agent-tracker hook $event\"}]}]"
         done
         hooks_json+="}"
@@ -151,7 +157,8 @@ install_hooks() {
         fi
 
         # Append tracker hook entry to this event
-        local matcher="${TRACKER_MATCHERS[$event]:-}"
+        local matcher
+            matcher=$(_get_matcher "$event")
         jq --arg event "$event" --arg cmd "$cmd" --arg matcher "$matcher" '
             .hooks[$event] = (.hooks[$event] // []) + [{
                 matcher: $matcher,
