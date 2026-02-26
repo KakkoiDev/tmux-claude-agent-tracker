@@ -101,8 +101,8 @@ cmd_hook() {
     _debug_log "HOOK $event sid=$sid"
 
     # _ensure_session only for session-creating hooks.
-    # Hot-path hooks (PostToolUse, PostToolUseFailure, Notification, Stop, TeammateIdle) skip this
-    # — their UPDATEs are no-ops if session doesn't exist yet.
+    # Hot-path hooks (PostToolUse, PostToolUseFailure, Notification, PermissionRequest, Stop, TeammateIdle) skip this
+    # - their UPDATEs are no-ops if session doesn't exist yet.
     # SessionStart creates as idle; UserPromptSubmit creates as working.
     case "$event" in
         SessionStart)     _ensure_session "$sid" "$json" "idle" ;;
@@ -117,6 +117,7 @@ cmd_hook() {
         PostToolUseFailure) _hook_post_tool "$sid" ;;
         Stop)             _hook_stop "$sid" ;;
         Notification)     _hook_notification "$sid" ;;
+        PermissionRequest) _hook_permission_request "$sid" ;;
         SessionEnd)       sql "DELETE FROM sessions WHERE session_id='$sid';" ;;
         TeammateIdle)     _hook_teammate_idle "$json" ;;
         *) return 0 ;;
@@ -158,7 +159,7 @@ cmd_hook() {
                 _hook_new_status="completed"
                 _hook_sid="$sid"
                 ;;
-            Notification)
+            Notification|PermissionRequest)
                 _hook_new_status="blocked"
                 _hook_sid="$sid"
                 ;;
@@ -285,6 +286,26 @@ _hook_notification() {
         __render=""
     fi
     _debug_log "notification sid=$sid type=$ntype old=$__old_status changed=$([ -n "$__render" ] && echo y || echo n)"
+    if [[ -z "$__render" ]]; then __changed=0; fi
+}
+
+# PermissionRequest fires immediately when a permission dialog appears.
+# More reliable than Notification (which has 4-41s upstream delay).
+_hook_permission_request() {
+    local sid="$1"
+    local _result
+    _result=$(sql "SELECT status FROM sessions WHERE session_id='$sid';
+         UPDATE sessions SET status='blocked', updated_at=unixepoch()
+         WHERE session_id='$sid' AND status = 'working';
+         SELECT CASE WHEN changes() = 0 THEN '' ELSE ($_RENDER_SQL) END;")
+    if [[ "$_result" == *$'\n'* ]]; then
+        __old_status="${_result%%$'\n'*}"
+        __render="${_result#*$'\n'}"
+    else
+        __old_status="$_result"
+        __render=""
+    fi
+    _debug_log "permission_request sid=$sid old=$__old_status changed=$([ -n "$__render" ] && echo y || echo n)"
     if [[ -z "$__render" ]]; then __changed=0; fi
 }
 

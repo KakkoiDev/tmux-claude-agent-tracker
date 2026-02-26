@@ -107,7 +107,7 @@ SELECT CASE WHEN changes() = 0 THEN '' ELSE (render query) END;
 
 If `changes() = 0`, the hook is a no-op — skip render, skip tmux refresh.
 
-These hooks also skip `_ensure_session` (the session is guaranteed to exist by the time PostToolUse or Notification fires). This eliminates 2 sqlite3 calls from the hot path.
+These hooks also skip `_ensure_session` (the session is guaranteed to exist by the time PostToolUse, Notification, or PermissionRequest fires). This eliminates 2 sqlite3 calls from the hot path.
 
 ### Config loading
 
@@ -199,8 +199,11 @@ Multiple concurrent hook processes. WAL mode handles this:
 | Stop | working/blocked -> completed | `status IN ('working', 'blocked')` |
 | session-window-changed / window-pane-changed / client-session-changed | completed -> idle | `status='completed'` AND `tmux_pane` matches focused pane |
 | Notification | working -> blocked | `status='working'`, `permission_prompt` or `elicitation_dialog` only |
+| PermissionRequest | working -> blocked | `status='working'`, fires immediately when permission dialog appears |
 | SessionEnd | any -> (deleted) | unconditional |
 | TeammateIdle | any -> idle | unconditional |
+
+**Why `PermissionRequest`?** The `Notification` hook has a documented 4-41s upstream delay. `PermissionRequest` fires immediately when the permission dialog appears, providing instant blocked detection. Both hooks set the same state; whichever fires first wins, the other is a no-op.
 
 **Why `PostToolUseFailure`?** Claude Code's `Stop` hook does not fire on user interrupt. If a user rejects a permission prompt and interrupts, the session stays stuck at `blocked` with no hook to clear it. `PostToolUseFailure` fires on tool rejection/failure and transitions `blocked` back to `working`, where `_reap_dead` can clean up.
 

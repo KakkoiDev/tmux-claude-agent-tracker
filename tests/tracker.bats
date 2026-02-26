@@ -113,6 +113,30 @@ teardown() {
     [[ "$(get_status s1)" == "working" ]]
 }
 
+@test "PermissionRequest sets working to blocked" {
+    insert_session "s1" "working" "%1"
+    _hook_permission_request "s1"
+    [[ "$(get_status s1)" == "blocked" ]]
+}
+
+@test "PermissionRequest no-op when already blocked" {
+    insert_session "s1" "blocked" "%1"
+    sql "UPDATE sessions SET updated_at = unixepoch() - 300 WHERE session_id='s1';"
+    local before
+    before=$(sql "SELECT updated_at FROM sessions WHERE session_id='s1';")
+    _hook_permission_request "s1"
+    local after
+    after=$(sql "SELECT updated_at FROM sessions WHERE session_id='s1';")
+    [[ "$(get_status s1)" == "blocked" ]]
+    [[ "$before" == "$after" ]]
+}
+
+@test "PermissionRequest no-op when idle" {
+    insert_session "s1" "idle" "%1"
+    _hook_permission_request "s1"
+    [[ "$(get_status s1)" == "idle" ]]
+}
+
 @test "PostToolUseFailure transitions blocked to working" {
     insert_session "s1" "blocked" "%1"
     _hook_post_tool "s1"
@@ -843,6 +867,24 @@ _integration_mock() {
     insert_session "s1" "working" "%1"
     echo '{"session_id":"s1","notification_type":"elicitation_dialog"}' | cmd_hook "Notification"
     [[ "$(get_status s1)" == "blocked" ]]
+}
+
+@test "integration: PermissionRequest sets blocked" {
+    insert_session "s1" "working" "%1"
+    echo '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp"}}' | cmd_hook "PermissionRequest"
+    [[ "$(get_status s1)" == "blocked" ]]
+}
+
+@test "integration: PermissionRequest no-op when already blocked" {
+    insert_session "s1" "blocked" "%1"
+    sql "UPDATE sessions SET updated_at = unixepoch() - 300 WHERE session_id='s1';"
+    local before
+    before=$(sql "SELECT updated_at FROM sessions WHERE session_id='s1';")
+    echo '{"session_id":"s1","tool_name":"Bash"}' | cmd_hook "PermissionRequest"
+    local after
+    after=$(sql "SELECT updated_at FROM sessions WHERE session_id='s1';")
+    [[ "$(get_status s1)" == "blocked" ]]
+    [[ "$before" == "$after" ]]
 }
 
 @test "integration: blocked then PostToolUse sets working" {
