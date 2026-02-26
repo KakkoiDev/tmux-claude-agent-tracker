@@ -1326,7 +1326,7 @@ SCRIPT
     insert_session "t1" "idle" "%2"
     sql "UPDATE sessions SET agent_type='teammate' WHERE session_id='t1';"
     local total
-    total=$(sql "SELECT COUNT(*) FROM sessions WHERE COALESCE(agent_type,'')!='teammate';")
+    total=$(sql "SELECT COUNT(*) FROM sessions WHERE COALESCE(agent_type,'')='';")
     [[ "$total" -eq 1 ]]
 }
 
@@ -1345,6 +1345,108 @@ SCRIPT
 
     _reap_dead
     [[ -z "$(get_status t1)" ]]
+}
+
+# ── TaskCompleted ───────────────────────────────────────────────────
+
+@test "TaskCompleted increments task_count" {
+    insert_session "s1" "working" "%1"
+    _hook_task_completed "s1"
+    local tc
+    tc=$(sql "SELECT task_count FROM sessions WHERE session_id='s1';")
+    [[ "$tc" -eq 1 ]]
+}
+
+@test "TaskCompleted does not change status" {
+    insert_session "s1" "working" "%1"
+    _hook_task_completed "s1"
+    [[ "$(get_status s1)" == "working" ]]
+}
+
+@test "TaskCompleted increments multiple times" {
+    insert_session "s1" "working" "%1"
+    _hook_task_completed "s1"
+    _hook_task_completed "s1"
+    _hook_task_completed "s1"
+    local tc
+    tc=$(sql "SELECT task_count FROM sessions WHERE session_id='s1';")
+    [[ "$tc" -eq 3 ]]
+}
+
+@test "Render shows task_count in completed slot" {
+    insert_session "s1" "working" "%1"
+    sql "UPDATE sessions SET task_count=3 WHERE session_id='s1';"
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    # 3 tasks completed shows as "3+"
+    [[ "$out" == *"3+"* ]]
+}
+
+@test "Render shows 1+ for stopped session with no tasks" {
+    insert_session "s1" "completed" "%1"
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    [[ "$out" == *"1+"* ]]
+}
+
+@test "integration: cmd_hook TaskCompleted lifecycle" {
+    _integration_mock "%1"
+    echo '{"session_id":"s1","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
+    echo '{"session_id":"s1"}' | cmd_hook "UserPromptSubmit"
+    [[ "$(get_status s1)" == "working" ]]
+
+    echo '{"session_id":"s1"}' | cmd_hook "TaskCompleted"
+    echo '{"session_id":"s1"}' | cmd_hook "TaskCompleted"
+    [[ "$(get_status s1)" == "working" ]]
+    local tc
+    tc=$(sql "SELECT task_count FROM sessions WHERE session_id='s1';")
+    [[ "$tc" -eq 2 ]]
+}
+
+# ── Worktree detection ──────────────────────────────────────────────
+
+@test "_ensure_session sets agent_type=worktree for worktree cwd" {
+    local json='{"session_id":"w1","cwd":"/home/user/project/.claude/worktrees/fix-bug/"}'
+    _ensure_session "w1" "$json" "idle"
+    local atype
+    atype=$(sql "SELECT agent_type FROM sessions WHERE session_id='w1';")
+    [[ "$atype" == "worktree" ]]
+}
+
+@test "_ensure_session leaves agent_type empty for normal cwd" {
+    local json='{"session_id":"n1","cwd":"/home/user/project"}'
+    _ensure_session "n1" "$json" "idle"
+    local atype
+    atype=$(sql "SELECT COALESCE(agent_type,'') FROM sessions WHERE session_id='n1';")
+    [[ "$atype" == "" ]]
+}
+
+@test "_render_cache excludes worktree sessions" {
+    insert_session "w1" "working" "%1"
+    insert_session "wt1" "working" "%2"
+    sql "UPDATE sessions SET agent_type='worktree' WHERE session_id='wt1';"
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    # Only 1 working (w1), not 2
+    [[ "$out" == *"1*"* ]]
+}
+
+@test "integration: worktree session excluded from counts" {
+    _integration_mock "%1"
+    echo '{"session_id":"s1","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
+    echo '{"session_id":"s1"}' | cmd_hook "UserPromptSubmit"
+
+    # Worktree session created directly (simulating _ensure_session with worktree cwd)
+    insert_session "wt1" "working" "%2"
+    sql "UPDATE sessions SET agent_type='worktree' WHERE session_id='wt1';"
+
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    [[ "$out" == *"1*"* ]]
 }
 
 # ── Debug logging ─────────────────────────────────────────────────

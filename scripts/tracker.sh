@@ -40,9 +40,9 @@ _RENDER_SQL="SELECT
     COALESCE(SUM(CASE WHEN status='working' THEN 1 ELSE 0 END),0) || '|' ||
     COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END),0) || '|' ||
     COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0) || '|' ||
-    COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0) || '|' ||
-    COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked' AND COALESCE(agent_type,'')!='teammate'),0)
-    FROM sessions WHERE COALESCE(agent_type,'')!='teammate'"
+    COALESCE(SUM(CASE WHEN task_count > 0 THEN task_count WHEN status='completed' THEN 1 ELSE 0 END),0) || '|' ||
+    COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked' AND COALESCE(agent_type,'')=''),0)
+    FROM sessions WHERE COALESCE(agent_type,'')=''"
 
 _fire_transition_hook() {
     local from="$1" to="$2" sid="$3" project="$4"
@@ -74,6 +74,7 @@ CREATE TABLE sessions (
     git_branch    TEXT,
     prompt_summary TEXT,
     agent_type    TEXT,
+    task_count    INTEGER NOT NULL DEFAULT 0,
     tmux_pane     TEXT,
     tmux_target   TEXT,
     started_at    INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -118,6 +119,7 @@ cmd_hook() {
         Stop)             _hook_stop "$sid" ;;
         Notification)     _hook_notification "$sid" ;;
         PermissionRequest) _hook_permission_request "$sid" ;;
+        TaskCompleted)    _hook_task_completed "$sid" ;;
         SessionEnd)       sql "DELETE FROM sessions WHERE session_id='$sid';" ;;
         TeammateIdle)     _hook_teammate_idle "$json" ;;
         *) return 0 ;;
@@ -163,6 +165,7 @@ cmd_hook() {
                 _hook_new_status="blocked"
                 _hook_sid="$sid"
                 ;;
+            TaskCompleted) _hook_new_status="" ;;
             *) _hook_new_status="" ;;
         esac
         if [[ -n "$_hook_new_status" && "$__old_status" != "$_hook_new_status" ]]; then
@@ -180,7 +183,7 @@ _ensure_session() {
     existing=$(sql "SELECT 1 FROM sessions WHERE session_id='$sid' AND tmux_pane != '' LIMIT 1;")
     [[ -n "$existing" ]] && return 0
 
-    local cwd project branch pane target
+    local cwd project branch pane target atype
     cwd=$(_json_val "$json" "cwd")
     [[ -z "$cwd" ]] && cwd="${PWD}"
     project=$(basename "$cwd")
@@ -192,22 +195,28 @@ _ensure_session() {
             -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
     fi
 
+    # Detect worktree sessions via cwd pattern
+    atype=""
+    if [[ "$cwd" == *"/.claude/worktrees/"* ]]; then
+        atype="worktree"
+    fi
+
     # One Claude per pane — evict stale sessions on the same pane.
     # Atomic: DELETE + INSERT in one sqlite3 process to prevent render seeing N-1 sessions.
     if [[ -n "$pane" ]]; then
         sql "DELETE FROM sessions WHERE tmux_pane='$(sql_esc "$pane")' AND session_id!='$sid';
              INSERT OR IGNORE INTO sessions
-             (session_id, status, cwd, project_name, git_branch, tmux_pane, tmux_target)
+             (session_id, status, cwd, project_name, git_branch, agent_type, tmux_pane, tmux_target)
              VALUES ('$sid', '$init_status',
                      '$(sql_esc "$cwd")', '$(sql_esc "$project")',
-                     '$(sql_esc "$branch")', '$(sql_esc "$pane")',
-                     '$(sql_esc "$target")');"
+                     '$(sql_esc "$branch")', '$(sql_esc "$atype")',
+                     '$(sql_esc "$pane")', '$(sql_esc "$target")');"
     else
         sql "INSERT OR IGNORE INTO sessions
-             (session_id, status, cwd, project_name, git_branch, tmux_pane, tmux_target)
+             (session_id, status, cwd, project_name, git_branch, agent_type, tmux_pane, tmux_target)
              VALUES ('$sid', '$init_status',
                      '$(sql_esc "$cwd")', '$(sql_esc "$project")',
-                     '$(sql_esc "$branch")', '', '');"
+                     '$(sql_esc "$branch")', '$(sql_esc "$atype")', '', '');"
     fi
 
     # Backfill tmux info if missing (session existed but lacked pane data)
@@ -309,6 +318,13 @@ _hook_permission_request() {
     if [[ -z "$__render" ]]; then __changed=0; fi
 }
 
+_hook_task_completed() {
+    local sid="$1"
+    sql "UPDATE sessions SET task_count = task_count + 1, updated_at=unixepoch()
+         WHERE session_id='$sid';"
+    _debug_log "task_completed sid=$sid"
+}
+
 _hook_teammate_idle() {
     local json="$1"
     local tid
@@ -380,17 +396,17 @@ _render_cache() {
         COALESCE(SUM(CASE WHEN status='working' THEN 1 ELSE 0 END),0),
         COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END),0),
         COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0),
-        COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0),
+        COALESCE(SUM(CASE WHEN task_count > 0 THEN task_count WHEN status='completed' THEN 1 ELSE 0 END),0),
         COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions
-                  WHERE status='blocked' AND COALESCE(agent_type,'')!='teammate'),0)
-        FROM sessions WHERE COALESCE(agent_type,'')!='teammate';") || return 0
+                  WHERE status='blocked' AND COALESCE(agent_type,'')=''),0)
+        FROM sessions WHERE COALESCE(agent_type,'')='';") || return 0
     [[ -z "$counts" ]] && counts="0|0|0|0|0"
     _debug_log "render counts=$counts"
 
     local project=""
     if [[ "${SHOW_PROJECT:-0}" == "1" ]]; then
         project=$(sql "SELECT project_name FROM sessions
-                       WHERE COALESCE(agent_type,'')!='teammate'
+                       WHERE COALESCE(agent_type,'')=''
                        ORDER BY CASE WHEN status='blocked' THEN 0 ELSE 1 END,
                                 updated_at DESC LIMIT 1;" 2>/dev/null || true)
     fi
@@ -416,7 +432,7 @@ cmd_refresh() {
     grace="${grace:-15}"
     local has_stale_completed
     has_stale_completed=$(sql "SELECT 1 FROM sessions WHERE status='completed'
-         AND COALESCE(agent_type,'')!='teammate'
+         AND COALESCE(agent_type,'')=''
          AND updated_at <= unixepoch() - $grace LIMIT 1;")
     if [[ -n "$has_stale_completed" ]]; then
         tmux run-shell -b "$SCRIPTS_DIR/tracker.sh pane-focus #{pane_id}" 2>/dev/null || true
@@ -435,7 +451,7 @@ cmd_menu() {
 
     # Total count
     local total
-    total=$(sql "SELECT COUNT(*) FROM sessions WHERE COALESCE(agent_type,'')!='teammate';") || total=0
+    total=$(sql "SELECT COUNT(*) FROM sessions WHERE COALESCE(agent_type,'')='';") || total=0
     [[ "$total" -eq 0 ]] && { tmux display-message "No active Claude agents"; return; }
 
     # Pagination math
@@ -448,7 +464,7 @@ cmd_menu() {
     rows=$(sql_sep '|' "SELECT session_id, status, project_name,
                COALESCE(git_branch,''), COALESCE(tmux_target,'')
         FROM sessions
-        WHERE COALESCE(agent_type,'')!='teammate'
+        WHERE COALESCE(agent_type,'')=''
         ORDER BY CASE status
             WHEN 'blocked' THEN 0 WHEN 'completed' THEN 1 WHEN 'working' THEN 2 ELSE 3
         END, updated_at DESC

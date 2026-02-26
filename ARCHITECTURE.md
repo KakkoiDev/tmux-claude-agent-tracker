@@ -155,6 +155,22 @@ The tracker processes hooks in ~77ms. Perceived latency comes from Claude Code's
 | `date`+`stat` in config check | ~8ms (source file directly) |
 | render+refresh on no-ops | ~15ms (skip via `SELECT changes()`) |
 
+## Agent Type Filtering
+
+The `agent_type` column classifies sessions that should be excluded from status bar counts. All render queries, menu counts, and blocked timer queries use `WHERE COALESCE(agent_type,'')=''` to include only untyped (normal) sessions.
+
+| agent_type | Source | Purpose |
+|------------|--------|---------|
+| `teammate` | `_hook_teammate_idle` | Swarm workers managed by a leader |
+| `worktree` | `_ensure_session` cwd detection | `isolation: "worktree"` spawned sessions |
+| `NULL`/empty | Default | Normal user sessions (included in counts) |
+
+This is future-proof: any new `agent_type` value is automatically excluded from display counts without SQL changes.
+
+### Worktree Detection
+
+Sessions spawned with `isolation: "worktree"` run in `.claude/worktrees/{name}/` subdirectories. `_ensure_session` checks `cwd` for the `/.claude/worktrees/` pattern and sets `agent_type='worktree'`. This avoids registering a `WorktreeCreate` hook (which would replace default worktree creation behavior).
+
 ## Self-Healing (_ensure_session)
 
 Called for session-creating hooks (SessionStart, UserPromptSubmit). Registers the session if missing, backfills tmux pane data if incomplete. Accepts an initial status parameter: SessionStart creates as `idle`, UserPromptSubmit creates as `working`.
@@ -200,12 +216,15 @@ Multiple concurrent hook processes. WAL mode handles this:
 | session-window-changed / window-pane-changed / client-session-changed | completed -> idle | `status='completed'` AND `tmux_pane` matches focused pane |
 | Notification | working -> blocked | `status='working'`, `permission_prompt` or `elicitation_dialog` only |
 | PermissionRequest | working -> blocked | `status='working'`, fires immediately when permission dialog appears |
+| TaskCompleted | (no status change) | increments task_count |
 | SessionEnd | any -> (deleted) | unconditional |
 | TeammateIdle | any -> idle | unconditional |
 
 **Why `PermissionRequest`?** The `Notification` hook has a documented 4-41s upstream delay. `PermissionRequest` fires immediately when the permission dialog appears, providing instant blocked detection. Both hooks set the same state; whichever fires first wins, the other is a no-op.
 
 **Why `PostToolUseFailure`?** Claude Code's `Stop` hook does not fire on user interrupt. If a user rejects a permission prompt and interrupts, the session stays stuck at `blocked` with no hook to clear it. `PostToolUseFailure` fires on tool rejection/failure and transitions `blocked` back to `working`, where `_reap_dead` can clean up.
+
+**Why `TaskCompleted`?** Swarm/team workers complete individual tasks without ending their session. Without this hook, the completed count (`+`) only reflects session endings (Stop). `TaskCompleted` increments a `task_count` column per session. The render formula uses `task_count` when > 0, falling back to 1 for stopped sessions with no tasks. This avoids double-counting: a session with 3 task completions shows `3+`, not `4+`.
 
 **Why `permission_prompt|elicitation_dialog` matcher on Notification?** The `Notification` hook fires for multiple types: `permission_prompt`, `elicitation_dialog`, `idle_prompt`, `auth_success`. Both `permission_prompt` and `elicitation_dialog` mean Claude is waiting for user input. Without the filter, an `idle_prompt` notification would incorrectly show the session as blocked.
 
@@ -324,6 +343,7 @@ CREATE TABLE sessions (
     git_branch    TEXT,
     prompt_summary TEXT,
     agent_type    TEXT,
+    task_count    INTEGER NOT NULL DEFAULT 0,
     tmux_pane     TEXT,
     tmux_target   TEXT,
     started_at    INTEGER NOT NULL DEFAULT (unixepoch()),

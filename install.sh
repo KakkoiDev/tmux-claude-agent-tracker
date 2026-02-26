@@ -76,6 +76,7 @@ fi  # end !HOOKS_ONLY
 TRACKER_EVENTS=(
     SessionStart SessionEnd UserPromptSubmit
     PostToolUse PostToolUseFailure Stop Notification PermissionRequest
+    TaskCompleted
 )
 # Notification must match only permission_prompt or elicitation_dialog (user attention needed)
 TRACKER_MATCHERS=([Notification]="permission_prompt|elicitation_dialog")
@@ -94,7 +95,8 @@ Add the following to ~/.claude/settings.json under "hooks":
     "PostToolUseFailure": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook PostToolUseFailure" }] }],
     "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Stop" }] }],
     "Notification": [{ "matcher": "permission_prompt|elicitation_dialog", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Notification" }] }],
-    "PermissionRequest": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook PermissionRequest" }] }]
+    "PermissionRequest": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook PermissionRequest" }] }],
+    "TaskCompleted": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook TaskCompleted" }] }]
   }
 }
 MANUAL_HOOKS
