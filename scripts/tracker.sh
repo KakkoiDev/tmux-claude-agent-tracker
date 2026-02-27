@@ -40,7 +40,7 @@ _RENDER_SQL="SELECT
     COALESCE(SUM(CASE WHEN status='working' THEN 1 ELSE 0 END),0) || '|' ||
     COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END),0) || '|' ||
     COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0) || '|' ||
-    COALESCE(SUM(CASE WHEN task_count > 0 THEN task_count WHEN status='completed' THEN 1 ELSE 0 END),0) || '|' ||
+    COALESCE(SUM(CASE WHEN status='completed' AND task_count > 0 THEN task_count WHEN status='completed' THEN 1 ELSE 0 END),0) || '|' ||
     COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked' AND COALESCE(agent_type,'')=''),0)
     FROM sessions WHERE COALESCE(agent_type,'')=''"
 
@@ -439,7 +439,7 @@ _render_cache() {
         COALESCE(SUM(CASE WHEN status='working' THEN 1 ELSE 0 END),0),
         COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END),0),
         COALESCE(SUM(CASE WHEN status='idle' THEN 1 ELSE 0 END),0),
-        COALESCE(SUM(CASE WHEN task_count > 0 THEN task_count WHEN status='completed' THEN 1 ELSE 0 END),0),
+        COALESCE(SUM(CASE WHEN status='completed' AND task_count > 0 THEN task_count WHEN status='completed' THEN 1 ELSE 0 END),0),
         COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions
                   WHERE status='blocked' AND COALESCE(agent_type,'')=''),0)
         FROM sessions WHERE COALESCE(agent_type,'')='';") || return 0

@@ -1418,13 +1418,22 @@ SCRIPT
 }
 
 @test "Render shows task_count in completed slot" {
-    insert_session "s1" "working" "%1"
+    insert_session "s1" "completed" "%1"
     sql "UPDATE sessions SET task_count=3 WHERE session_id='s1';"
     _render_cache
     local out
     out=$(cat "$CACHE")
     # 3 tasks completed shows as "3+"
     [[ "$out" == *"3+"* ]]
+}
+
+@test "Render does not count task_count for non-completed sessions" {
+    insert_session "s1" "working" "%1"
+    sql "UPDATE sessions SET task_count=3 WHERE session_id='s1';"
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    [[ "$out" == *"0+"* ]]
 }
 
 @test "Render shows 1+ for stopped session with no tasks" {
