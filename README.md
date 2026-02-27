@@ -168,15 +168,38 @@ set -g @claude-tracker-on-blocked 'paplay /usr/share/sounds/freedesktop/stereo/c
 set -g @claude-tracker-on-completed 'afplay /System/Library/Sounds/Glass.aiff'
 set -g @claude-tracker-on-blocked 'afplay /System/Library/Sounds/Glass.aiff'
 
-# Phone push notifications via ntfy.sh (free, no account needed)
-# 1. Install ntfy app on phone (App Store / Google Play)
-# 2. Pick a unique topic name:
-#      echo "claude-$(openssl rand -hex 4)"
-# 3. Subscribe to that topic in the ntfy app
-# 4. Add hooks (replace MY_TOPIC with your topic name):
-set -g @claude-tracker-on-blocked 'curl -s -d "Agent in $4 needs attention" ntfy.sh/MY_TOPIC'
-set -g @claude-tracker-on-completed 'curl -s -d "Agent in $4 finished" ntfy.sh/MY_TOPIC'
 ```
+
+### Phone Push Notifications (ntfy.sh)
+
+Get push notifications on your phone when agents finish or need attention. Uses [ntfy.sh](https://ntfy.sh) - free, no account, no signup.
+
+**1. Generate a private topic ID:**
+
+```bash
+echo "claude-$(openssl rand -hex 4)"
+# Output: claude-2bb1234q (your ID will differ)
+```
+
+**2. Subscribe on your phone:**
+
+- Install the ntfy app ([App Store](https://apps.apple.com/app/ntfy/id1625396347) / [Google Play](https://play.google.com/store/apps/details?id=io.heckel.ntfy))
+- Tap **+** and subscribe to your topic (e.g. `claude-2bb1234q`)
+
+**3. Add hooks to `~/.tmux.conf`** (replace `claude-2bb1234q` with your topic):
+
+```bash
+set -g @claude-tracker-on-blocked 'curl -s -d "Agent in $4 needs attention" ntfy.sh/claude-2bb1234q'
+set -g @claude-tracker-on-completed 'curl -s -d "Agent in $4 finished" ntfy.sh/claude-2bb1234q'
+```
+
+**4. Test it:**
+
+```bash
+curl -s -d "Test notification" ntfy.sh/claude-2bb1234q
+```
+
+Reload tmux (`tmux source ~/.tmux.conf`) and you'll get push notifications whenever an agent blocks or completes.
 
 ## Remote Access (Phone / Tablet)
 

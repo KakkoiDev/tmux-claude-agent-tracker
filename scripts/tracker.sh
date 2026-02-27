@@ -122,6 +122,18 @@ cmd_hook() {
         TaskCompleted)    _hook_task_completed "$sid" ;;
         SessionEnd)       sql "DELETE FROM sessions WHERE session_id='$sid';" ;;
         TeammateIdle)     _hook_teammate_idle "$json" ;;
+        SubagentStart)
+            local _agent_id _agent_type
+            _agent_id=$(_json_val "$json" "agent_id")
+            _agent_type=$(_json_val "$json" "agent_type")
+            _debug_log "subagent_start parent=$sid agent_id=$_agent_id agent_type=$_agent_type"
+            __changed=0 ;;
+        SubagentStop)
+            local _agent_id _agent_type
+            _agent_id=$(_json_val "$json" "agent_id")
+            _agent_type=$(_json_val "$json" "agent_type")
+            _debug_log "subagent_stop parent=$sid agent_id=$_agent_id agent_type=$_agent_type"
+            __changed=0 ;;
         *) return 0 ;;
     esac
 
