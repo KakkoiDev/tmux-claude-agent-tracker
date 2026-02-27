@@ -146,3 +146,7 @@ read_cache() {
 cache_mtime() {
     [[ -f "$CACHE" ]] && _file_mtime "$CACHE" 2>/dev/null || echo "0"
 }
+
+get_subagent_count() {
+    sql "SELECT subagent_count FROM sessions WHERE session_id='$1';"
+}

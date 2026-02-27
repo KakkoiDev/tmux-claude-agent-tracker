@@ -431,3 +431,156 @@ teardown() {
     fire_hook SessionEnd "$json"
     [[ "$(count_sessions)" -eq 0 ]]
 }
+
+# ── 15. Subagent lifecycle ─────────────────────────────────────────
+
+@test "integration: subagent lifecycle - Stop deferred until subagents finish" {
+    local sid="sub-life"
+    local json="{\"session_id\":\"$sid\",\"cwd\":\"/tmp/test\"}"
+    local sub1="{\"session_id\":\"$sid\",\"agent_id\":\"sub-1\",\"agent_type\":\"researcher\",\"cwd\":\"/tmp/test\"}"
+
+    fire_hook SessionStart "$json"
+    fire_hook UserPromptSubmit "$json"
+    [[ "$(get_status "$sid")" == "working" ]]
+
+    # Spawn subagent
+    fire_hook SubagentStart "$sub1"
+    local count
+    count=$(sql "SELECT subagent_count FROM sessions WHERE session_id='$sid';")
+    [[ "$count" -eq 1 ]]
+
+    # Stop fires while subagent active - should NOT complete
+    fire_hook Stop "$json"
+    [[ "$(get_status "$sid")" == "working" ]]
+
+    # Subagent finishes
+    fire_hook SubagentStop "$sub1"
+    count=$(sql "SELECT subagent_count FROM sessions WHERE session_id='$sid';")
+    [[ "$count" -eq 0 ]]
+
+    # Real Stop - now completes
+    fire_hook Stop "$json"
+    [[ "$(get_status "$sid")" == "completed" ]]
+
+    local out
+    out=$(read_cache)
+    [[ "$out" == *"1+"* ]]
+}
+
+@test "integration: SubagentStop clears blocked parent to working" {
+    local sid="sub-unblock"
+    local json="{\"session_id\":\"$sid\",\"cwd\":\"/tmp/test\"}"
+    local sub1="{\"session_id\":\"$sid\",\"agent_id\":\"sub-1\",\"agent_type\":\"researcher\",\"cwd\":\"/tmp/test\"}"
+
+    fire_hook SessionStart "$json"
+    fire_hook UserPromptSubmit "$json"
+    fire_hook SubagentStart "$sub1"
+    fire_hook Notification "$json"
+    [[ "$(get_status "$sid")" == "blocked" ]]
+
+    # SubagentStop clears blocked
+    fire_hook SubagentStop "$sub1"
+    [[ "$(get_status "$sid")" == "working" ]]
+
+    local out
+    out=$(read_cache)
+    [[ "$out" == *"1*"* ]]
+    [[ "$out" == *"0!"* ]]
+}
+
+@test "integration: multiple subagents count correctly through lifecycle" {
+    local sid="multi-sub"
+    local json="{\"session_id\":\"$sid\",\"cwd\":\"/tmp/test\"}"
+
+    fire_hook SessionStart "$json"
+    fire_hook UserPromptSubmit "$json"
+
+    # Spawn 3 subagents
+    for i in 1 2 3; do
+        fire_hook SubagentStart "{\"session_id\":\"$sid\",\"agent_id\":\"sub-$i\",\"agent_type\":\"worker\",\"cwd\":\"/tmp/test\"}"
+    done
+    local count
+    count=$(sql "SELECT subagent_count FROM sessions WHERE session_id='$sid';")
+    [[ "$count" -eq 3 ]]
+
+    # Stop deferred
+    fire_hook Stop "$json"
+    [[ "$(get_status "$sid")" == "working" ]]
+
+    # Subagents finish one by one
+    for i in 1 2 3; do
+        fire_hook SubagentStop "{\"session_id\":\"$sid\",\"agent_id\":\"sub-$i\",\"agent_type\":\"worker\",\"cwd\":\"/tmp/test\"}"
+    done
+    count=$(sql "SELECT subagent_count FROM sessions WHERE session_id='$sid';")
+    [[ "$count" -eq 0 ]]
+
+    # Real Stop
+    fire_hook Stop "$json"
+    [[ "$(get_status "$sid")" == "completed" ]]
+}
+
+@test "integration: PermissionRequest only blocks from working" {
+    local sid="perm-guard"
+    local json="{\"session_id\":\"$sid\",\"cwd\":\"/tmp/test\"}"
+
+    fire_hook SessionStart "$json"
+    [[ "$(get_status "$sid")" == "idle" ]]
+
+    # PermissionRequest on idle - should NOT block
+    fire_hook PermissionRequest "$json"
+    [[ "$(get_status "$sid")" == "idle" ]]
+
+    # Move to working, then complete
+    fire_hook UserPromptSubmit "$json"
+    fire_hook Stop "$json"
+    [[ "$(get_status "$sid")" == "completed" ]]
+
+    # PermissionRequest on completed - should NOT block
+    fire_hook PermissionRequest "$json"
+    [[ "$(get_status "$sid")" == "completed" ]]
+}
+
+@test "integration: Notification only blocks from working" {
+    local sid="notif-guard"
+    local json="{\"session_id\":\"$sid\",\"cwd\":\"/tmp/test\"}"
+
+    fire_hook SessionStart "$json"
+    [[ "$(get_status "$sid")" == "idle" ]]
+
+    # Notification on idle - should NOT block
+    fire_hook Notification "$json"
+    [[ "$(get_status "$sid")" == "idle" ]]
+
+    # Move to working, then complete
+    fire_hook UserPromptSubmit "$json"
+    fire_hook Stop "$json"
+    [[ "$(get_status "$sid")" == "completed" ]]
+
+    # Notification on completed - should NOT block
+    fire_hook Notification "$json"
+    [[ "$(get_status "$sid")" == "completed" ]]
+}
+
+@test "integration: task_count only counted for completed sessions in cache" {
+    local sid1="tc-working"
+    local sid2="tc-completed"
+
+    fire_hook SessionStart "{\"session_id\":\"$sid1\",\"cwd\":\"/tmp/test\"}"
+    fire_hook UserPromptSubmit "{\"session_id\":\"$sid1\",\"cwd\":\"/tmp/test\"}"
+    fire_hook TaskCompleted "{\"session_id\":\"$sid1\",\"cwd\":\"/tmp/test\"}"
+    fire_hook TaskCompleted "{\"session_id\":\"$sid1\",\"cwd\":\"/tmp/test\"}"
+    fire_hook TaskCompleted "{\"session_id\":\"$sid1\",\"cwd\":\"/tmp/test\"}"
+    # s1: working with task_count=3
+
+    fire_hook SessionStart "{\"session_id\":\"$sid2\",\"cwd\":\"/tmp/test\"}"
+    fire_hook UserPromptSubmit "{\"session_id\":\"$sid2\",\"cwd\":\"/tmp/test\"}"
+    fire_hook TaskCompleted "{\"session_id\":\"$sid2\",\"cwd\":\"/tmp/test\"}"
+    fire_hook Stop "{\"session_id\":\"$sid2\",\"cwd\":\"/tmp/test\"}"
+    # s2: completed with task_count=1
+
+    local out
+    out=$(read_cache)
+    # Only s2's task_count should show (1+), not s1's
+    [[ "$out" == *"1+"* ]]
+    [[ "$out" == *"1*"* ]]
+}

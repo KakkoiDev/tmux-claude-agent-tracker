@@ -181,6 +181,141 @@ teardown() {
     [[ "$count" == "0" ]]
 }
 
+@test "SubagentStart increments count via cmd_hook" {
+    insert_session "s1" "working" "%1"
+    printf '{"session_id":"s1","agent_id":"sub-1","agent_type":"researcher"}' | cmd_hook SubagentStart
+    local count
+    count=$(sql "SELECT subagent_count FROM sessions WHERE session_id='s1';")
+    [[ "$count" -eq 1 ]]
+}
+
+@test "SubagentStart stacks multiple increments" {
+    insert_session "s1" "working" "%1"
+    printf '{"session_id":"s1","agent_id":"sub-1","agent_type":"researcher"}' | cmd_hook SubagentStart
+    printf '{"session_id":"s1","agent_id":"sub-2","agent_type":"coder"}' | cmd_hook SubagentStart
+    printf '{"session_id":"s1","agent_id":"sub-3","agent_type":"reviewer"}' | cmd_hook SubagentStart
+    local count
+    count=$(sql "SELECT subagent_count FROM sessions WHERE session_id='s1';")
+    [[ "$count" -eq 3 ]]
+}
+
+@test "SubagentStop via cmd_hook decrements count" {
+    insert_session "s1" "working" "%1"
+    sql "UPDATE sessions SET subagent_count=2 WHERE session_id='s1';"
+    printf '{"session_id":"s1","agent_id":"sub-1","agent_type":"researcher"}' | cmd_hook SubagentStop
+    local count
+    count=$(sql "SELECT subagent_count FROM sessions WHERE session_id='s1';")
+    [[ "$count" -eq 1 ]]
+}
+
+@test "SubagentStop on working keeps working" {
+    insert_session "s1" "working" "%1"
+    sql "UPDATE sessions SET subagent_count=1 WHERE session_id='s1';"
+    _hook_subagent_stop "s1"
+    [[ "$(get_status s1)" == "working" ]]
+}
+
+@test "SubagentStop on completed keeps completed" {
+    insert_session "s1" "completed" "%1"
+    sql "UPDATE sessions SET subagent_count=1 WHERE session_id='s1';"
+    _hook_subagent_stop "s1"
+    [[ "$(get_status s1)" == "completed" ]]
+}
+
+@test "SubagentStop on idle keeps idle" {
+    insert_session "s1" "idle" "%1"
+    sql "UPDATE sessions SET subagent_count=1 WHERE session_id='s1';"
+    _hook_subagent_stop "s1"
+    [[ "$(get_status s1)" == "idle" ]]
+}
+
+@test "SubagentStart on nonexistent session is safe no-op" {
+    printf '{"session_id":"ghost","agent_id":"sub-1","agent_type":"researcher"}' | cmd_hook SubagentStart
+    [[ "$(count_sessions)" -eq 0 ]]
+}
+
+@test "SubagentStop on nonexistent session is safe no-op" {
+    printf '{"session_id":"ghost","agent_id":"sub-1","agent_type":"researcher"}' | cmd_hook SubagentStop
+    [[ "$(count_sessions)" -eq 0 ]]
+}
+
+@test "SubagentStart does not trigger render (changed=0)" {
+    insert_session "s1" "working" "%1"
+    _render_cache
+    sleep 1
+    local before
+    before=$(_file_mtime "$CACHE")
+    printf '{"session_id":"s1","agent_id":"sub-1","agent_type":"researcher"}' | cmd_hook SubagentStart
+    local after
+    after=$(_file_mtime "$CACHE")
+    [[ "$before" == "$after" ]]
+}
+
+@test "Full subagent lifecycle: Stop deferred then completes" {
+    insert_session "s1" "working" "%1"
+    sql "UPDATE sessions SET subagent_count=2 WHERE session_id='s1';"
+
+    # Stop while subagents active - skipped
+    _hook_stop "s1"
+    [[ "$(get_status s1)" == "working" ]]
+
+    # First subagent stops
+    _hook_subagent_stop "s1"
+    [[ "$(get_status s1)" == "working" ]]
+    local count
+    count=$(sql "SELECT subagent_count FROM sessions WHERE session_id='s1';")
+    [[ "$count" -eq 1 ]]
+
+    # Second subagent stops
+    _hook_subagent_stop "s1"
+    [[ "$(get_status s1)" == "working" ]]
+    count=$(sql "SELECT subagent_count FROM sessions WHERE session_id='s1';")
+    [[ "$count" -eq 0 ]]
+
+    # Real Stop now - completes
+    _hook_stop "s1"
+    [[ "$(get_status s1)" == "completed" ]]
+}
+
+@test "Full subagent lifecycle via cmd_hook dispatch" {
+    _integration_mock "%1"
+    echo '{"session_id":"s1","cwd":"/tmp/test"}' | cmd_hook SessionStart
+    echo '{"session_id":"s1"}' | cmd_hook UserPromptSubmit
+    [[ "$(get_status s1)" == "working" ]]
+
+    # Spawn 2 subagents
+    echo '{"session_id":"s1","agent_id":"sub-1","agent_type":"worker"}' | cmd_hook SubagentStart
+    echo '{"session_id":"s1","agent_id":"sub-2","agent_type":"worker"}' | cmd_hook SubagentStart
+    local count
+    count=$(sql "SELECT subagent_count FROM sessions WHERE session_id='s1';")
+    [[ "$count" -eq 2 ]]
+
+    # Stop deferred
+    echo '{"session_id":"s1"}' | cmd_hook Stop
+    [[ "$(get_status s1)" == "working" ]]
+
+    # Subagents finish
+    echo '{"session_id":"s1","agent_id":"sub-1","agent_type":"worker"}' | cmd_hook SubagentStop
+    echo '{"session_id":"s1","agent_id":"sub-2","agent_type":"worker"}' | cmd_hook SubagentStop
+    count=$(sql "SELECT subagent_count FROM sessions WHERE session_id='s1';")
+    [[ "$count" -eq 0 ]]
+
+    # Real Stop
+    echo '{"session_id":"s1"}' | cmd_hook Stop
+    [[ "$(get_status s1)" == "completed" ]]
+}
+
+@test "Render sums task_count across multiple completed sessions" {
+    insert_session "s1" "completed" "%1"
+    insert_session "s2" "completed" "%2"
+    sql "UPDATE sessions SET task_count=3 WHERE session_id='s1';"
+    sql "UPDATE sessions SET task_count=2 WHERE session_id='s2';"
+    _render_cache
+    local out
+    out=$(cat "$CACHE")
+    [[ "$out" == *"5+"* ]]
+}
+
 @test "PostToolUseFailure transitions blocked to working" {
     insert_session "s1" "blocked" "%1"
     _hook_post_tool "s1"

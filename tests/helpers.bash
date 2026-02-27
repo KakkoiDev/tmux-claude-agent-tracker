@@ -129,3 +129,8 @@ get_status() {
 count_sessions() {
     sql "SELECT COUNT(*) FROM sessions;"
 }
+
+# Get subagent count for a session
+get_subagent_count() {
+    sql "SELECT subagent_count FROM sessions WHERE session_id='$1';"
+}
