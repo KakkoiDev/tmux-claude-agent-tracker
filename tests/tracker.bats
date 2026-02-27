@@ -1542,6 +1542,28 @@ SCRIPT
     [[ "$client" == "codex" ]]
 }
 
+@test "cmd_codex_notify start-like event transitions new session to working" {
+    cmd_codex_notify "codex-notify" '{"session_id":"s2","type":"agent-turn-begin","cwd":"/tmp/test"}'
+    [[ "$(get_status s2)" == "working" ]]
+    local client
+    client=$(sql "SELECT agent_client FROM sessions WHERE session_id='s2';")
+    [[ "$client" == "codex" ]]
+}
+
+@test "cmd_codex_notify start-like event fires working transition hook for new session" {
+    export _HAS_HOOKS="1"
+    export HOOK_ON_WORKING="$TEST_TMPDIR/hook.sh"
+    local _hook_log="$TEST_TMPDIR/hook.out"
+    cat > "$HOOK_ON_WORKING" <<'SCRIPT'
+#!/usr/bin/env bash
+echo "$1|$2|$3|$4" >> "${0%/*}/hook.out"
+SCRIPT
+    chmod +x "$HOOK_ON_WORKING"
+    cmd_codex_notify "codex-notify" '{"session_id":"s3","type":"agent-turn-started","cwd":"/tmp/test"}'
+    wait_for_file "$_hook_log"
+    [[ "$(cat "$_hook_log")" == *"idle|working|s3|"* ]]
+}
+
 @test "_reap_dead still cleans up teammate sessions" {
     insert_session "t1" "idle" "%99"
     sql "UPDATE sessions SET agent_type='teammate' WHERE session_id='t1';"

@@ -85,7 +85,7 @@ _map_codex_event() {
     case "$ntype" in
         *permission*|*approval*|*consent*) echo "PermissionRequest" ;;
         *complete*|*completed*|*finish*|*finished*|*done*) echo "Stop" ;;
-        *start*|*started*|*resume*|*resumed*) echo "PostToolUse" ;;
+        *start*|*started*|*begin*|*began*|*resume*|*resumed*) echo "PostToolUse" ;;
         *fail*|*failed*|*error*|*reject*|*denied*) echo "PostToolUseFailure" ;;
         *) echo "PostToolUse" ;;
     esac
@@ -293,7 +293,7 @@ cmd_codex_notify() {
     fi
     [[ -z "$payload" ]] && payload='{}'
 
-    local sid ntype cwd event sid_esc synth
+    local sid ntype cwd event sid_esc synth init_status
     sid=$(_json_val "$payload" "session_id")
     [[ -z "$sid" ]] && sid=$(_json_val "$payload" "conversation_id")
     [[ -z "$sid" ]] && sid=$(_json_val "$payload" "thread_id")
@@ -309,11 +309,16 @@ cmd_codex_notify() {
     cwd=$(_json_val "$payload" "cwd")
     [[ -z "$cwd" ]] && cwd="$PWD"
 
-    # Ensure session exists before we map notify type to a synthetic hook event.
-    synth="{\"session_id\":\"$(json_esc "$sid")\",\"cwd\":\"$(json_esc "$cwd")\"}"
-    _ensure_session "$sid_esc" "$synth" "working" "codex"
-
     event=$(_map_codex_event "$ntype")
+    case "$event" in
+        Stop|Notification|PermissionRequest) init_status="working" ;;
+        *) init_status="idle" ;;
+    esac
+
+    # Ensure session exists before dispatching the mapped synthetic hook event.
+    synth="{\"session_id\":\"$(json_esc "$sid")\",\"cwd\":\"$(json_esc "$cwd")\"}"
+    _ensure_session "$sid_esc" "$synth" "$init_status" "codex"
+
     if [[ "$event" == "PermissionRequest" ]]; then
         synth="{\"session_id\":\"$(json_esc "$sid")\",\"cwd\":\"$(json_esc "$cwd")\",\"notification_type\":\"permission_prompt\"}"
     fi
