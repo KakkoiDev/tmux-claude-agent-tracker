@@ -1,6 +1,6 @@
 # tmux-claude-agent-tracker
 
-Track [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and Codex agent sessions in your tmux status bar. Hook-driven, no daemon, no polling.
+Track [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Gemini CLI](https://github.com/google-gemini/gemini-cli), and Codex agent sessions in your tmux status bar. Hook-driven, no daemon, no polling.
 
 ## Status Bar
 
@@ -22,10 +22,10 @@ Completed (`+`) auto-clears to idle when you focus the pane.
 `prefix + a` opens the agent list. Select to jump to pane.
 
 ```
-Claude Agents
+AI Agents
 ─────────────
 ! [claude] project-a/main
-+ [codex] project-b/feature
++ [gemini] project-b/feature
 * [claude] project-c/dev
 . [codex] project-d/fix
 ─────────────
@@ -34,7 +34,7 @@ Quit      q
 
 ## How It Works
 
-- Claude Code hooks fire on session events (start, stop, tool use, permission, failure)
+- Claude Code and Gemini CLI hooks fire on session events (start, stop, tool use, permission, failure)
 - Codex `notify` events are mapped into tracker state transitions
 - Each hook writes to a local SQLite database and pushes to a tmux option (~35ms)
 - `refresh-client -S` triggers instant display via `#{@claude-tracker-status}`
@@ -49,6 +49,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 - **macOS** and **Linux**
 - Claude Code **native binary** and **npm/node** installs
+- Gemini CLI v0.26.0+
 - Bash 3.2+ (macOS default) and Bash 4+/5+ (Linux)
 
 ## Install
@@ -71,12 +72,13 @@ The install script:
 2. Initializes the SQLite database
 3. Adds the plugin to `~/.tmux.conf`
 4. Configures Claude Code hooks in `~/.claude/settings.json` (requires `jq`)
-5. Configures Codex notify hook in `~/.codex/config.toml`
-6. Copies skill bundles to `~/.claude/skills/` and `~/.codex/skills/`
+5. Configures Gemini CLI hooks in `~/.gemini/settings.json` (if `~/.gemini` exists)
+6. Configures Codex notify hook in `~/.codex/config.toml`
+7. Copies skill bundles to `~/.claude/skills/` and `~/.codex/skills/`
 
 If `jq` is not installed, the script prints the hook JSON for manual configuration.
 
-## Hook Setup (Claude + Codex)
+## Hook Setup (Claude + Gemini + Codex)
 
 ### Automatic (recommended)
 
@@ -88,12 +90,14 @@ Run:
 
 This configures:
 - Claude Code hooks in `~/.claude/settings.json`
+- Gemini CLI hooks in `~/.gemini/settings.json` (if `~/.gemini` exists)
 - Codex notify hook in `~/.codex/config.toml`
 
-Verify both:
+Verify:
 
 ```bash
 jq '.hooks | keys' ~/.claude/settings.json
+jq '.hooks | keys' ~/.gemini/settings.json  # if using Gemini CLI
 rg -n 'notify\\s*=\\s*\\[.*tmux-claude-agent-tracker.*codex-notify' ~/.codex/config.toml
 ```
 
@@ -155,7 +159,7 @@ Then `prefix + I` to install. TPM runs `claude-tracker.tmux` which automatically
 cd ~/.tmux/plugins/tmux-claude-agent-tracker && ./uninstall.sh
 ```
 
-Removes all artifacts: CLI symlinks, tmux.conf lines, Claude Code hooks, Codex notify hook, Claude/Codex skill folders, data directory, and live tmux state.
+Removes all artifacts: CLI symlinks, tmux.conf lines, Claude Code hooks, Gemini CLI hooks, Codex notify hook, Claude/Codex skill folders, data directory, and live tmux state.
 
 ## Configuration
 

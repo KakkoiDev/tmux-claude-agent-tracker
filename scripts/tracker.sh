@@ -404,7 +404,7 @@ _hook_notification() {
     local sid="$1"
     local ntype
     ntype=$(_json_val "$__json" "notification_type")
-    if [[ -n "$ntype" && "$ntype" != "permission_prompt" && "$ntype" != "elicitation_dialog" ]]; then
+    if [[ -n "$ntype" && "$ntype" != "permission_prompt" && "$ntype" != "elicitation_dialog" && "$ntype" != "ToolPermission" ]]; then
         __changed=0; return 0
     fi
     local _result
@@ -578,7 +578,7 @@ cmd_menu() {
     # Total count
     local total
     total=$(sql "SELECT COUNT(*) FROM sessions WHERE COALESCE(agent_type,'')='';") || total=0
-    [[ "$total" -eq 0 ]] && { tmux display-message "No active Claude agents"; return; }
+    [[ "$total" -eq 0 ]] && { tmux display-message "No active AI agents"; return; }
 
     # Pagination math
     local total_pages=$(( (total + items_per_page - 1) / items_per_page ))
@@ -596,8 +596,8 @@ cmd_menu() {
         END, updated_at DESC
         LIMIT $items_per_page OFFSET $offset;") || true
 
-    local title="Claude Agents"
-    [[ "$total_pages" -gt 1 ]] && title="Claude Agents ($page/$total_pages)"
+    local title="AI Agents"
+    [[ "$total_pages" -gt 1 ]] && title="AI Agents ($page/$total_pages)"
 
     local args=(-T "$title")
     while IFS='|' read -r _sid status project branch target client; do
@@ -659,7 +659,7 @@ _reap_dead() {
     while read -r pane shell_pid; do
         [[ -z "$pane" ]] && continue
         alive_panes+="$pane"$'\n'
-        _has_claude_child "$shell_pid" && claude_panes+="$pane"$'\n'
+        _has_agent_child "$shell_pid" && claude_panes+="$pane"$'\n'
     done <<< "$pane_info"
 
     local rows changed=0
@@ -742,7 +742,7 @@ cmd_scan() {
         [[ -z "$pane" ]] && continue
 
         # Check if this shell has a claude child process
-        _has_claude_child "$shell_pid" || continue
+        _has_agent_child "$shell_pid" || continue
 
         # Get pane context
         local cwd project branch target

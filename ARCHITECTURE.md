@@ -190,7 +190,7 @@ Sessions can leak (crashes, killed panes). Three cleanup mechanisms:
 2. **`_reap_dead`** (hook path, throttled to 30s): cross-references `tmux list-panes` with stored pane IDs, deletes dead ones
 3. **`cmd_cleanup`** (manual): deletes sessions older than 24h + dead pane check
 
-`_reap_dead` checks pane liveness via `tmux list-panes` and process inspection via `_has_claude_child`. On Linux this uses `pgrep -P`; on macOS it falls back to `ps`-based lookup since macOS `pgrep -P` silently fails for processes that rename argv[0] (claude runs as node). Working/blocked sessions on live panes without a claude child process are cleaned up (Ctrl+C case).
+`_reap_dead` checks pane liveness via `tmux list-panes` and process inspection via `_has_agent_child`. On Linux this uses `pgrep -P`; on macOS it falls back to `ps`-based lookup since macOS `pgrep -P` silently fails for processes that rename argv[0] (claude runs as node). Working/blocked sessions on live panes without an agent child process (claude, codex, or gemini) are cleaned up (Ctrl+C case).
 
 ## SQLite as IPC
 
@@ -214,7 +214,7 @@ Multiple concurrent hook processes. WAL mode handles this:
 | PostToolUseFailure | blocked/idle/completed -> working | `status!='working'` (catches rejected tools / interrupts) |
 | Stop | working/blocked -> completed | `status IN ('working', 'blocked')` |
 | session-window-changed / window-pane-changed / client-session-changed | completed -> idle | `status='completed'` AND `tmux_pane` matches focused pane |
-| Notification | working -> blocked | `status='working'`, `permission_prompt` or `elicitation_dialog` only |
+| Notification | working -> blocked | `status='working'`, `permission_prompt`, `elicitation_dialog`, or `ToolPermission` (Gemini) only |
 | PermissionRequest | working -> blocked | `status='working'`, fires immediately when permission dialog appears |
 | TaskCompleted | (no status change) | increments task_count |
 | SessionEnd | any -> (deleted) | unconditional |
@@ -226,7 +226,7 @@ Multiple concurrent hook processes. WAL mode handles this:
 
 **Why `TaskCompleted`?** Swarm/team workers complete individual tasks without ending their session. Without this hook, the completed count (`+`) only reflects session endings (Stop). `TaskCompleted` increments a `task_count` column per session. The render formula uses `task_count` when > 0, falling back to 1 for stopped sessions with no tasks. This avoids double-counting: a session with 3 task completions shows `3+`, not `4+`.
 
-**Why `permission_prompt|elicitation_dialog` matcher on Notification?** The `Notification` hook fires for multiple types: `permission_prompt`, `elicitation_dialog`, `idle_prompt`, `auth_success`. Both `permission_prompt` and `elicitation_dialog` mean Claude is waiting for user input. Without the filter, an `idle_prompt` notification would incorrectly show the session as blocked.
+**Why `permission_prompt|elicitation_dialog` matcher on Notification?** The `Notification` hook fires for multiple types: `permission_prompt`, `elicitation_dialog`, `idle_prompt`, `auth_success`. Both `permission_prompt` and `elicitation_dialog` mean Claude is waiting for user input. Gemini CLI uses `ToolPermission` for the same purpose. Without the filter, an `idle_prompt` notification would incorrectly show the session as blocked.
 
 ## Configurable Icons
 
@@ -289,7 +289,7 @@ Three install paths, all converge on the same result:
 
 ### Manual (`./install.sh`)
 
-Full setup: CLI symlinks + DB init + tmux.conf line + Claude Code hooks + skill file.
+Full setup: CLI symlinks + DB init + tmux.conf line + Claude Code hooks + Gemini CLI hooks + skill file.
 
 ### TPM (`prefix + I`)
 
@@ -302,7 +302,7 @@ User only needs one manual step: `./install.sh --hooks-only` to configure Claude
 
 ### Hooks-only (`./install.sh --hooks-only`)
 
-Skips CLI/DB/tmux.conf setup, only configures Claude Code hooks. Used after TPM install or to re-run hook configuration.
+Skips CLI/DB/tmux.conf setup, only configures Claude Code and Gemini CLI hooks. Used after TPM install or to re-run hook configuration.
 
 ## Uninstall
 
@@ -311,9 +311,10 @@ Skips CLI/DB/tmux.conf setup, only configures Claude Code hooks. Used after TPM 
 1. CLI symlink (`~/.local/bin/tmux-claude-agent-tracker`)
 2. tmux.conf plugin lines (comment + run-shell line)
 3. Claude Code hooks (jq filter removes entries matching `tmux-claude-agent-tracker`)
-4. Skill file (`~/.claude/skills/tmux-claude-agent-tracker/`)
-5. Data directory (`~/.tmux-claude-agent-tracker/`)
-6. Live tmux state: status-right injection, tmux hooks, options, key binding
+4. Gemini CLI hooks (same jq filter on `~/.gemini/settings.json`)
+5. Skill file (`~/.claude/skills/tmux-claude-agent-tracker/`)
+6. Data directory (`~/.tmux-claude-agent-tracker/`)
+7. Live tmux state: status-right injection, tmux hooks, options, key binding
 
 ## Testing
 

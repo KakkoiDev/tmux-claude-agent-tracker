@@ -181,6 +181,122 @@ install_hooks() {
 
 install_hooks
 
+# ── configure Gemini CLI hooks ───────────────────────────────────────
+
+GEMINI_SETTINGS="$HOME/.gemini/settings.json"
+
+# Gemini events map to tracker internal commands:
+#   SessionStart  -> hook SessionStart
+#   SessionEnd    -> hook SessionEnd
+#   BeforeAgent   -> hook UserPromptSubmit
+#   AfterAgent    -> hook Stop
+#   AfterTool     -> hook PostToolUse
+#   Notification (ToolPermission) -> hook Notification
+GEMINI_EVENT_MAP=(
+    "SessionStart:SessionStart:"
+    "SessionEnd:SessionEnd:"
+    "BeforeAgent:UserPromptSubmit:"
+    "AfterAgent:Stop:"
+    "AfterTool:PostToolUse:"
+    "Notification:Notification:ToolPermission"
+)
+
+_print_manual_gemini_hooks() {
+    cat <<'MANUAL_GEMINI'
+
+Add the following to ~/.gemini/settings.json under "hooks":
+
+{
+  "hooks": {
+    "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook SessionStart" }] }],
+    "SessionEnd": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook SessionEnd" }] }],
+    "BeforeAgent": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook UserPromptSubmit" }] }],
+    "AfterAgent": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Stop" }] }],
+    "AfterTool": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook PostToolUse" }] }],
+    "Notification": [{ "matcher": "ToolPermission", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Notification" }] }]
+  }
+}
+MANUAL_GEMINI
+}
+
+install_gemini_hooks() {
+    # Only install if ~/.gemini directory exists (Gemini CLI is set up)
+    if [[ ! -d "$HOME/.gemini" ]]; then
+        return
+    fi
+
+    if ! $HAS_JQ; then
+        echo "gemini hooks: jq not found - skipping auto-configuration"
+        _print_manual_gemini_hooks
+        return
+    fi
+
+    if [[ ! -f "$GEMINI_SETTINGS" ]]; then
+        # Create minimal settings with hooks
+        local hooks_json="{"
+        local first=true
+        for entry in "${GEMINI_EVENT_MAP[@]}"; do
+            local gemini_event="${entry%%:*}"
+            local remainder="${entry#*:}"
+            local tracker_cmd="${remainder%%:*}"
+            local matcher="${remainder#*:}"
+            $first || hooks_json+=","
+            first=false
+            hooks_json+="\"$gemini_event\":[{\"matcher\":\"$matcher\",\"hooks\":[{\"type\":\"command\",\"command\":\"tmux-claude-agent-tracker hook $tracker_cmd\"}]}]"
+        done
+        hooks_json+="}"
+
+        jq -n --argjson hooks "$hooks_json" '{hooks: $hooks}' > "$GEMINI_SETTINGS"
+        echo "gemini hooks: created $GEMINI_SETTINGS with all tracker hooks"
+        return
+    fi
+
+    # Settings file exists - merge tracker hooks into existing hooks
+    local tmp="${GEMINI_SETTINGS}.tmp"
+    local changed=false
+
+    cp "$GEMINI_SETTINGS" "$tmp"
+
+    # Ensure top-level "hooks" key exists
+    if ! jq -e '.hooks' "$tmp" >/dev/null 2>&1; then
+        jq '. + {hooks: {}}' "$tmp" > "${tmp}.2" && mv "${tmp}.2" "$tmp"
+    fi
+
+    for entry in "${GEMINI_EVENT_MAP[@]}"; do
+        local gemini_event="${entry%%:*}"
+        local remainder="${entry#*:}"
+        local tracker_cmd="${remainder%%:*}"
+        local matcher="${remainder#*:}"
+        local cmd="tmux-claude-agent-tracker hook $tracker_cmd"
+
+        # Check if this exact command already exists under this event
+        if jq -e --arg event "$gemini_event" --arg cmd "$cmd" '
+            .hooks[$event] // [] | map(.hooks[]? | select(.command == $cmd)) | length > 0
+        ' "$tmp" >/dev/null 2>&1; then
+            continue
+        fi
+
+        # Append tracker hook entry to this event
+        jq --arg event "$gemini_event" --arg cmd "$cmd" --arg matcher "$matcher" '
+            .hooks[$event] = (.hooks[$event] // []) + [{
+                matcher: $matcher,
+                hooks: [{type: "command", command: $cmd}]
+            }]
+        ' "$tmp" > "${tmp}.2" && mv "${tmp}.2" "$tmp"
+        changed=true
+    done
+
+    if $changed; then
+        mv "$tmp" "$GEMINI_SETTINGS"
+        echo "gemini hooks: added tracker hooks to $GEMINI_SETTINGS"
+    else
+        rm -f "$tmp"
+        echo "gemini hooks: already configured"
+    fi
+}
+
+install_gemini_hooks
+
 # ── configure Codex notify hook ──────────────────────────────────────
 
 _print_manual_codex_notify() {
@@ -275,8 +391,8 @@ install_codex_notify
 
 echo ""
 if $HOOKS_ONLY; then
-    echo "Done. Restart Claude Code and Codex for hooks to take effect."
+    echo "Done. Restart Claude Code, Gemini CLI, and Codex for hooks to take effect."
 else
     echo "Done. Reload tmux: tmux source ~/.tmux.conf"
-    echo "Then restart Claude Code and Codex for hooks to take effect."
+    echo "Then restart Claude Code, Gemini CLI, and Codex for hooks to take effect."
 fi

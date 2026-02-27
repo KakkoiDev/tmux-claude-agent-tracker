@@ -10,6 +10,7 @@ echo ""
 echo "  - CLI symlink (~/.local/bin/tmux-claude-agent-tracker)"
 echo "  - tmux.conf plugin line"
 echo "  - Claude Code hooks (settings.json)"
+echo "  - Gemini CLI hooks (~/.gemini/settings.json)"
 echo "  - Codex notify hook (~/.codex/config.toml)"
 echo "  - Skill folders (~/.claude/skills and ~/.codex/skills)"
 echo "  - Data directory (~/.tmux-claude-agent-tracker/)"
@@ -73,6 +74,34 @@ if [[ -f "$CLAUDE_SETTINGS" ]]; then
         echo ""
         echo "jq not found. Manually remove hooks containing 'tmux-claude-agent-tracker' from:"
         echo "  $CLAUDE_SETTINGS"
+        echo ""
+    fi
+fi
+
+# ── Gemini CLI hooks ────────────────────────────────────────────────
+
+GEMINI_SETTINGS="$HOME/.gemini/settings.json"
+if [[ -f "$GEMINI_SETTINGS" ]]; then
+    if command -v jq >/dev/null 2>&1; then
+        tmp="${GEMINI_SETTINGS}.tmp"
+        # Remove hook entries where command matches tmux-claude-agent-tracker
+        jq '
+            if .hooks then
+                .hooks |= with_entries(
+                    .value |= map(
+                        .hooks |= map(select(.command | test("tmux-claude-agent-tracker") | not))
+                        | select(.hooks | length > 0)
+                    )
+                    | select(.value | length > 0)
+                )
+                | if (.hooks | length) == 0 then del(.hooks) else . end
+            else . end
+        ' "$GEMINI_SETTINGS" > "$tmp" && mv "$tmp" "$GEMINI_SETTINGS"
+        echo "Removed: Gemini CLI hooks from settings.json"
+    else
+        echo ""
+        echo "jq not found. Manually remove hooks containing 'tmux-claude-agent-tracker' from:"
+        echo "  $GEMINI_SETTINGS"
         echo ""
     fi
 fi

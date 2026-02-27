@@ -113,6 +113,13 @@ teardown() {
     [[ "$(get_status s1)" == "working" ]]
 }
 
+@test "Notification ToolPermission sets working to blocked" {
+    insert_session "s1" "working" "%1"
+    __json='{"session_id":"s1","notification_type":"ToolPermission"}'
+    _hook_notification "s1"
+    [[ "$(get_status s1)" == "blocked" ]]
+}
+
 @test "PermissionRequest sets working to blocked" {
     insert_session "s1" "working" "%1"
     _hook_permission_request "s1"
@@ -425,7 +432,7 @@ teardown() {
             *) true ;;
         esac
     }
-    _has_claude_child() { return 0; }
+    _has_agent_child() { return 0; }
 
     _reap_dead
     [[ "$(get_status s1)" == "working" ]]
@@ -442,7 +449,7 @@ teardown() {
             *) true ;;
         esac
     }
-    _has_claude_child() { return 0; }
+    _has_agent_child() { return 0; }
 
     _reap_dead
     [[ "$(count_sessions)" -eq 2 ]]
@@ -457,7 +464,7 @@ teardown() {
             *) true ;;
         esac
     }
-    _has_claude_child() { return 0; }
+    _has_agent_child() { return 0; }
 
     _reap_dead
     [[ "$(count_sessions)" -eq 1 ]]
@@ -473,7 +480,7 @@ teardown() {
             *) true ;;
         esac
     }
-    _has_claude_child() { return 1; }
+    _has_agent_child() { return 1; }
 
     _reap_dead
     [[ -z "$(get_status s1)" ]]
@@ -494,7 +501,7 @@ teardown() {
             *) true ;;
         esac
     }
-    _has_claude_child() { return 0; }
+    _has_agent_child() { return 0; }
 
     _reap_dead
     [[ -z "$(get_status no-pane)" ]]
@@ -510,7 +517,7 @@ teardown() {
             *) true ;;
         esac
     }
-    _has_claude_child() { return 0; }
+    _has_agent_child() { return 0; }
 
     _reap_dead
     [[ -f "$TRACKER_DIR/.last_reap" ]]
@@ -532,7 +539,7 @@ teardown() {
             *) true ;;
         esac
     }
-    _has_claude_child() { return 1; }
+    _has_agent_child() { return 1; }
 
     _reap_dead
     [[ "$(get_status s1)" == "idle" ]]
@@ -990,7 +997,7 @@ teardown() {
 # ── Integration tests (full cmd_hook pipeline via stdin) ──────────────
 
 # Mock that handles all tmux subcommands correctly for integration tests.
-# _reap_dead calls list-panes and _has_claude_child, so we need both.
+# _reap_dead calls list-panes and _has_agent_child, so we need both.
 _integration_mock() {
     local pane="${1:-%1}"
     export TMUX_PANE="$pane"
@@ -1001,7 +1008,7 @@ _integration_mock() {
             *) true ;;
         esac
     }
-    _has_claude_child() { return 0; }
+    _has_agent_child() { return 0; }
 }
 
 @test "integration: SessionStart creates idle session" {
@@ -1045,6 +1052,12 @@ _integration_mock() {
 @test "integration: Notification elicitation_dialog sets blocked" {
     insert_session "s1" "working" "%1"
     echo '{"session_id":"s1","notification_type":"elicitation_dialog"}' | cmd_hook "Notification"
+    [[ "$(get_status s1)" == "blocked" ]]
+}
+
+@test "integration: Notification ToolPermission sets blocked" {
+    insert_session "s1" "working" "%1"
+    echo '{"session_id":"s1","notification_type":"ToolPermission"}' | cmd_hook "Notification"
     [[ "$(get_status s1)" == "blocked" ]]
 }
 
@@ -1180,7 +1193,7 @@ _integration_mock() {
             *) true ;;
         esac
     }
-    _has_claude_child() { return 1; }
+    _has_agent_child() { return 1; }
 
     _reap_dead
     [[ "$(get_status s1)" == "completed" ]]
@@ -1575,7 +1588,7 @@ SCRIPT
             *) true ;;
         esac
     }
-    _has_claude_child() { return 0; }
+    _has_agent_child() { return 0; }
 
     _reap_dead
     [[ -z "$(get_status t1)" ]]
