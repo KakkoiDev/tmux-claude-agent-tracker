@@ -6,6 +6,8 @@ BIN="$SCRIPT_DIR/bin/tmux-claude-agent-tracker"
 LINK="$HOME/.local/bin/tmux-claude-agent-tracker"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 CODEX_CONFIG="$HOME/.codex/config.toml"
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+CODEX_SKILLS_DIR="$CODEX_HOME/skills"
 HOOKS_ONLY=false
 
 for arg in "$@"; do
@@ -56,17 +58,17 @@ else
     echo "tmux.conf: already configured"
 fi
 
-# ── install skill file ────────────────────────────────────────────────
+# ── install skill bundles (Claude + Codex) ───────────────────────────
 
 for skill_dir in "$SCRIPT_DIR"/.claude/skills/tmux-claude-agent-tracker*; do
     [[ -d "$skill_dir" ]] || continue
     skill_name="$(basename "$skill_dir")"
-    skill_dest="$HOME/.claude/skills/$skill_name/SKILL.md"
-    if [[ -f "$skill_dir/SKILL.md" ]]; then
-        mkdir -p "$(dirname "$skill_dest")"
-        cp -f "$skill_dir/SKILL.md" "$skill_dest"
+    for skills_root in "$HOME/.claude/skills" "$CODEX_SKILLS_DIR"; do
+        skill_dest="$skills_root/$skill_name"
+        mkdir -p "$skill_dest"
+        cp -Rf "$skill_dir/." "$skill_dest/"
         echo "Skill: $skill_dest"
-    fi
+    done
 done
 
 fi  # end !HOOKS_ONLY
@@ -195,6 +197,29 @@ install_codex_notify() {
     local notify_line='notify = ["tmux-claude-agent-tracker", "codex-notify"]'
     mkdir -p "$(dirname "$CODEX_CONFIG")"
 
+    _has_global_notify() {
+        awk '
+            /^[[:space:]]*#/ { next }
+            /^[[:space:]]*\[/ { in_table=1 }
+            !in_table && /^[[:space:]]*notify[[:space:]]*=/ { found=1 }
+            END { exit(found ? 0 : 1) }
+        ' "$1"
+    }
+
+    _has_global_tracker_notify() {
+        awk -v needle="$notify_line" '
+            /^[[:space:]]*#/ { next }
+            /^[[:space:]]*\[/ { in_table=1 }
+            !in_table {
+                line=$0
+                sub(/^[[:space:]]+/, "", line)
+                sub(/[[:space:]]+$/, "", line)
+                if (line == needle) found=1
+            }
+            END { exit(found ? 0 : 1) }
+        ' "$1"
+    }
+
     if [[ ! -f "$CODEX_CONFIG" ]]; then
         {
             echo "# tmux-claude-agent-tracker"
@@ -204,8 +229,8 @@ install_codex_notify() {
         return
     fi
 
-    if grep -Eq '^[[:space:]]*notify[[:space:]]*=' "$CODEX_CONFIG"; then
-        if grep -Fq '"tmux-claude-agent-tracker", "codex-notify"' "$CODEX_CONFIG"; then
+    if _has_global_notify "$CODEX_CONFIG"; then
+        if _has_global_tracker_notify "$CODEX_CONFIG"; then
             echo "codex: notify hook already configured"
             return
         fi
@@ -214,12 +239,34 @@ install_codex_notify() {
         return
     fi
 
+    # migrate a previously appended notify line from table scope to top-level
+    if grep -Fq '"tmux-claude-agent-tracker", "codex-notify"' "$CODEX_CONFIG"; then
+        local tmp
+        tmp=$(mktemp)
+        sed \
+            -e '/^[[:space:]]*# tmux-claude-agent-tracker[[:space:]]*$/d' \
+            -e '/"tmux-claude-agent-tracker",[[:space:]]*"codex-notify"/d' \
+            "$CODEX_CONFIG" > "$tmp"
+        {
+            echo "# tmux-claude-agent-tracker"
+            echo "$notify_line"
+            echo ""
+            cat "$tmp"
+        } > "${tmp}.new"
+        mv "${tmp}.new" "$CODEX_CONFIG"
+        rm -f "$tmp"
+        echo "codex: moved notify hook to top-level in $CODEX_CONFIG"
+        return
+    fi
+
     {
-        echo ""
         echo "# tmux-claude-agent-tracker"
         echo "$notify_line"
-    } >> "$CODEX_CONFIG"
-    echo "codex: added notify hook to $CODEX_CONFIG"
+        echo ""
+        cat "$CODEX_CONFIG"
+    } > "${CODEX_CONFIG}.tmp"
+    mv "${CODEX_CONFIG}.tmp" "$CODEX_CONFIG"
+    echo "codex: added top-level notify hook to $CODEX_CONFIG"
 }
 
 install_codex_notify

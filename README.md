@@ -72,7 +72,7 @@ The install script:
 3. Adds the plugin to `~/.tmux.conf`
 4. Configures Claude Code hooks in `~/.claude/settings.json` (requires `jq`)
 5. Configures Codex notify hook in `~/.codex/config.toml`
-6. Copies the Claude Code skill file to `~/.claude/skills/`
+6. Copies skill bundles to `~/.claude/skills/` and `~/.codex/skills/`
 
 If `jq` is not installed, the script prints the hook JSON for manual configuration.
 
@@ -89,6 +89,13 @@ Run:
 This configures:
 - Claude Code hooks in `~/.claude/settings.json`
 - Codex notify hook in `~/.codex/config.toml`
+
+Verify both:
+
+```bash
+jq '.hooks | keys' ~/.claude/settings.json
+rg -n 'notify\\s*=\\s*\\[.*tmux-claude-agent-tracker.*codex-notify' ~/.codex/config.toml
+```
 
 ### Manual setup
 
@@ -116,13 +123,27 @@ Codex (`~/.codex/config.toml`):
 notify = ["tmux-claude-agent-tracker", "codex-notify"]
 ```
 
+## Skill Install (Claude + Codex)
+
+Install or refresh bundled skills in both locations:
+
+```bash
+PLUGIN_DIR="$HOME/.tmux/plugins/tmux-claude-agent-tracker"
+for skill_src in "$PLUGIN_DIR"/.claude/skills/tmux-claude-agent-tracker*; do
+  skill_name="$(basename "$skill_src")"
+  mkdir -p "$HOME/.claude/skills/$skill_name" "${CODEX_HOME:-$HOME/.codex}/skills/$skill_name"
+  cp -Rf "$skill_src/." "$HOME/.claude/skills/$skill_name/"
+  cp -Rf "$skill_src/." "${CODEX_HOME:-$HOME/.codex}/skills/$skill_name/"
+done
+```
+
 ### TPM
 
 ```bash
 set -g @plugin 'KakkoiDev/tmux-claude-agent-tracker'
 ```
 
-Then `prefix + I` to install. TPM runs `claude-tracker.tmux` which automatically provisions CLI symlinks and the skill file. You only need to run the hook installer once:
+Then `prefix + I` to install. TPM runs `claude-tracker.tmux` which automatically provisions CLI symlinks and syncs skill bundles into Claude and Codex skill folders. You only need to run the hook installer once:
 
 ```bash
 ~/.tmux/plugins/tmux-claude-agent-tracker/install.sh --hooks-only
@@ -134,7 +155,7 @@ Then `prefix + I` to install. TPM runs `claude-tracker.tmux` which automatically
 cd ~/.tmux/plugins/tmux-claude-agent-tracker && ./uninstall.sh
 ```
 
-Removes all artifacts: CLI symlinks, tmux.conf lines, Claude Code hooks, Codex notify hook, skill file, data directory, and live tmux state.
+Removes all artifacts: CLI symlinks, tmux.conf lines, Claude Code hooks, Codex notify hook, Claude/Codex skill folders, data directory, and live tmux state.
 
 ## Configuration
 

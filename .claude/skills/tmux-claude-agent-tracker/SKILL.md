@@ -1,14 +1,20 @@
+---
+name: tmux-claude-agent-tracker
+description: Track Claude Code and Codex agent sessions in tmux. Use when installing, configuring, debugging, or customizing tmux-claude-agent-tracker hooks, status bar rendering, menu behavior, and state transitions.
+---
+
 # tmux-claude-agent-tracker
 
-Track Claude Code agent sessions in the tmux status bar. Hook-driven, no daemon, no polling.
+Track Claude Code and Codex agent sessions in the tmux status bar. Hook-driven, no daemon, no polling.
 
 ## How It Works
 
 1. Claude Code hooks fire on session events and write JSON to stdin
-2. `tracker.sh hook <event>` parses the JSON, updates a SQLite DB, and re-renders the status bar
-3. `#{@claude-tracker-status}` displays the cached status string (instant, no subprocess)
-4. A periodic `#(tracker.sh refresh)` keeps the blocked timer current
-5. Dead sessions are reaped by cross-referencing tmux panes
+2. Codex `notify` fires on agent events and calls `tracker.sh codex-notify`
+3. `tracker.sh` parses hook JSON, updates a SQLite DB, and re-renders the status bar
+4. `#{@claude-tracker-status}` displays the cached status string (instant, no subprocess)
+5. A periodic `#(tracker.sh refresh)` keeps the blocked timer current
+6. Dead sessions are reaped by cross-referencing tmux panes
 
 ## State Machine
 
@@ -41,6 +47,7 @@ All commands go through `tmux-claude-agent-tracker` (symlinked to `scripts/track
 | `pane-focus-if-active <pane_id>` | Clear completed only if pane is currently focused |
 | `scan` | Discover untracked Claude processes via pgrep |
 | `cleanup` | Remove stale sessions (>24h or dead panes) |
+| `codex-notify <json>` | Handle Codex notify payloads and map to tracker states |
 
 ## Claude Code Hook Configuration
 
@@ -59,6 +66,16 @@ These hooks must be in `~/.claude/settings.json`. The `install.sh` script config
 **Why `PostToolUseFailure`?** Claude Code's `Stop` hook does not fire on user interrupt. If a user rejects a permission prompt, the session stays stuck at `blocked`. `PostToolUseFailure` clears it.
 
 **Why the Notification matcher?** The `Notification` hook fires for `permission_prompt`, `elicitation_dialog`, `idle_prompt`, `auth_success`. Only the first two mean Claude is waiting for user input.
+
+## Codex Notify Configuration
+
+Codex must include this in `~/.codex/config.toml`:
+
+```toml
+notify = ["tmux-claude-agent-tracker", "codex-notify"]
+```
+
+Without this notify hook, no Codex sessions are tracked and `[codex]` will never appear in the menu.
 
 ## tmux Configuration Options
 

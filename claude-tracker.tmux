@@ -23,14 +23,20 @@ _link_if_stale() {
 
 _link_if_stale "$CURRENT_DIR/bin/tmux-claude-agent-tracker" "$HOME/.local/bin/tmux-claude-agent-tracker"
 
-SKILL_SRC="$CURRENT_DIR/.claude/skills/tmux-claude-agent-tracker/SKILL.md"
-SKILL_DEST="$HOME/.claude/skills/tmux-claude-agent-tracker/SKILL.md"
-if [[ -f "$SKILL_SRC" ]]; then
-    if ! cmp -s "$SKILL_SRC" "$SKILL_DEST" 2>/dev/null; then
-        mkdir -p "$(dirname "$SKILL_DEST")"
-        cp -f "$SKILL_SRC" "$SKILL_DEST"
-    fi
-fi
+_sync_skill_bundle() {
+    local src_dir="$1" skills_root="$2" skill_name dest_dir
+    [[ -d "$src_dir" ]] || return
+    skill_name="$(basename "$src_dir")"
+    dest_dir="$skills_root/$skill_name"
+    mkdir -p "$dest_dir"
+    cp -Rf "$src_dir/." "$dest_dir/"
+}
+
+for src_dir in "$CURRENT_DIR"/.claude/skills/tmux-claude-agent-tracker*; do
+    [[ -d "$src_dir" ]] || continue
+    _sync_skill_bundle "$src_dir" "$HOME/.claude/skills"
+    _sync_skill_bundle "$src_dir" "${CODEX_HOME:-$HOME/.codex}/skills"
+done
 
 # Bind menu key
 tmux bind-key "$KEYBINDING" run-shell "$SCRIPTS_DIR/tracker.sh menu"

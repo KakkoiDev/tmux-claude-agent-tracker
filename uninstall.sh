@@ -11,7 +11,7 @@ echo "  - CLI symlink (~/.local/bin/tmux-claude-agent-tracker)"
 echo "  - tmux.conf plugin line"
 echo "  - Claude Code hooks (settings.json)"
 echo "  - Codex notify hook (~/.codex/config.toml)"
-echo "  - Skill file (~/.claude/skills/tmux-claude-agent-tracker/)"
+echo "  - Skill folders (~/.claude/skills and ~/.codex/skills)"
 echo "  - Data directory (~/.tmux-claude-agent-tracker/)"
 echo "  - Live tmux state (status bar, hooks, options)"
 echo ""
@@ -91,13 +91,17 @@ if [[ -f "$CODEX_CONFIG" ]]; then
     fi
 fi
 
-# ── Skill file ───────────────────────────────────────────────────────
+# ── Skill folders ────────────────────────────────────────────────────
 
-SKILL_DIR="$HOME/.claude/skills/tmux-claude-agent-tracker"
-if [[ -d "$SKILL_DIR" ]]; then
-    rm -rf "$SKILL_DIR"
-    echo "Removed: $SKILL_DIR"
-fi
+for skills_root in "$HOME/.claude/skills" "${CODEX_HOME:-$HOME/.codex}/skills"; do
+    for skill_name in tmux-claude-agent-tracker tmux-claude-agent-tracker-dev; do
+        skill_dir="$skills_root/$skill_name"
+        if [[ -d "$skill_dir" ]]; then
+            rm -rf "$skill_dir"
+            echo "Removed: $skill_dir"
+        fi
+    done
+done
 
 # ── Data directory ───────────────────────────────────────────────────
 
