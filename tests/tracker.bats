@@ -137,6 +137,12 @@ teardown() {
     [[ "$(get_status s1)" == "idle" ]]
 }
 
+@test "PermissionRequest sets completed to blocked" {
+    insert_session "s1" "completed" "%1"
+    _hook_permission_request "s1"
+    [[ "$(get_status s1)" == "blocked" ]]
+}
+
 @test "PostToolUseFailure transitions blocked to working" {
     insert_session "s1" "blocked" "%1"
     _hook_post_tool "s1"
@@ -149,15 +155,15 @@ teardown() {
     [[ "$(get_status s1)" == "idle" ]]
 }
 
-@test "Notification after Stop does not re-block session" {
+@test "Notification after Stop re-blocks completed session" {
     insert_session "s1" "working" "%1"
     _hook_stop "s1"
     [[ "$(get_status s1)" == "completed" ]]
     _hook_notification "s1" '{}'
-    [[ "$(get_status s1)" == "completed" ]]
+    [[ "$(get_status s1)" == "blocked" ]]
     _render_cache
-    [[ "$(cat "$CACHE")" == *"1+"* ]]
-    [[ "$(cat "$CACHE")" == *"0!"* ]]
+    [[ "$(cat "$CACHE")" == *"0+"* ]]
+    [[ "$(cat "$CACHE")" == *"1!"* ]]
 }
 
 @test "Notification does not reset blocked timer" {
@@ -1007,10 +1013,10 @@ _integration_mock() {
     [[ "$(get_status s1)" == "completed" ]]
 }
 
-@test "Notification does not set completed to blocked" {
+@test "Notification sets completed to blocked" {
     insert_session "s1" "completed" "%1"
     _hook_notification "s1" '{}'
-    [[ "$(get_status s1)" == "completed" ]]
+    [[ "$(get_status s1)" == "blocked" ]]
 }
 
 # ── Pane focus ───────────────────────────────────────────────────────
