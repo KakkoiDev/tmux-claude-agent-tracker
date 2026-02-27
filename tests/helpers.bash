@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     prompt_summary TEXT,
     agent_type    TEXT,
     task_count    INTEGER NOT NULL DEFAULT 0,
+    subagent_count INTEGER NOT NULL DEFAULT 0,
     tmux_pane     TEXT,
     tmux_target   TEXT,
     started_at    INTEGER NOT NULL DEFAULT (unixepoch()),

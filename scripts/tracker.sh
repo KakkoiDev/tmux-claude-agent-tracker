@@ -75,6 +75,7 @@ CREATE TABLE sessions (
     prompt_summary TEXT,
     agent_type    TEXT,
     task_count    INTEGER NOT NULL DEFAULT 0,
+    subagent_count INTEGER NOT NULL DEFAULT 0,
     tmux_pane     TEXT,
     tmux_target   TEXT,
     started_at    INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -88,6 +89,10 @@ SQL
 
 cmd_hook() {
     [[ -f "$DB" ]] || return 0
+    if [[ ! -f "$TRACKER_DIR/.schema_v2" ]]; then
+        sql "ALTER TABLE sessions ADD COLUMN subagent_count INTEGER NOT NULL DEFAULT 0;" 2>/dev/null || true
+        touch "$TRACKER_DIR/.schema_v2"
+    fi
     _load_config_fast
     local event="$1"
     local json
@@ -126,14 +131,16 @@ cmd_hook() {
             local _agent_id _agent_type
             _agent_id=$(_json_val "$json" "agent_id")
             _agent_type=$(_json_val "$json" "agent_type")
+            sql "UPDATE sessions SET subagent_count = subagent_count + 1
+                 WHERE session_id='$sid';"
             _debug_log "subagent_start parent=$sid agent_id=$_agent_id agent_type=$_agent_type"
             __changed=0 ;;
         SubagentStop)
             local _agent_id _agent_type
             _agent_id=$(_json_val "$json" "agent_id")
             _agent_type=$(_json_val "$json" "agent_type")
-            _debug_log "subagent_stop parent=$sid agent_id=$_agent_id agent_type=$_agent_type"
-            __changed=0 ;;
+            _hook_subagent_stop "$sid"
+            _debug_log "subagent_stop parent=$sid agent_id=$_agent_id agent_type=$_agent_type" ;;
         *) return 0 ;;
     esac
 
@@ -270,8 +277,16 @@ _hook_post_tool() {
 
 _hook_stop() {
     local sid="$1"
-    __old_status=$(sql "SELECT status FROM sessions WHERE session_id='$sid';")
-    _debug_log "stop sid=$sid old=$__old_status"
+    local _info
+    _info=$(sql_sep '|' "SELECT status, subagent_count FROM sessions WHERE session_id='$sid';")
+    __old_status="${_info%%|*}"
+    local _subs="${_info#*|}"
+    _subs="${_subs:-0}"
+    _debug_log "stop sid=$sid old=$__old_status subagents=$_subs"
+    # Don't mark completed while subagents are still running
+    if [[ "$_subs" -gt 0 ]]; then
+        return 0
+    fi
     sql "UPDATE sessions SET status='completed', updated_at=unixepoch()
          WHERE session_id='$sid' AND status IN ('working', 'blocked');"
     # Deferred clear: clear completed only if user is focused on this pane.
@@ -280,6 +295,22 @@ _hook_stop() {
     local delay="${COMPLETED_DELAY:-3}"
     if [[ -n "${TMUX_PANE:-}" && "$delay" -gt 0 ]] 2>/dev/null; then
         tmux run-shell -b "sleep $delay && $SCRIPTS_DIR/tracker.sh pane-focus-if-active $TMUX_PANE" 2>/dev/null || true
+    fi
+}
+
+_hook_subagent_stop() {
+    local sid="$1"
+    local _result
+    _result=$(sql_sep '|' "UPDATE sessions SET subagent_count = MAX(0, subagent_count - 1)
+         WHERE session_id='$sid';
+         SELECT status, subagent_count FROM sessions WHERE session_id='$sid';")
+    __old_status="${_result%%|*}"
+    local _subs="${_result#*|}"
+    _subs="${_subs:-0}"
+    # When last subagent finishes and parent is blocked, clear to working
+    if [[ "$__old_status" == "blocked" ]]; then
+        sql "UPDATE sessions SET status='working', updated_at=unixepoch()
+             WHERE session_id='$sid' AND status='blocked';"
     fi
 }
 
@@ -297,7 +328,7 @@ _hook_notification() {
     local _result
     _result=$(sql "SELECT status FROM sessions WHERE session_id='$sid';
          UPDATE sessions SET status='blocked', updated_at=unixepoch()
-         WHERE session_id='$sid' AND status != 'blocked';
+         WHERE session_id='$sid' AND status = 'working';
          SELECT CASE WHEN changes() = 0 THEN '' ELSE ($_RENDER_SQL) END;")
     if [[ "$_result" == *$'\n'* ]]; then
         __old_status="${_result%%$'\n'*}"
@@ -317,7 +348,7 @@ _hook_permission_request() {
     local _result
     _result=$(sql "SELECT status FROM sessions WHERE session_id='$sid';
          UPDATE sessions SET status='blocked', updated_at=unixepoch()
-         WHERE session_id='$sid' AND status != 'blocked';
+         WHERE session_id='$sid' AND status = 'working';
          SELECT CASE WHEN changes() = 0 THEN '' ELSE ($_RENDER_SQL) END;")
     if [[ "$_result" == *$'\n'* ]]; then
         __old_status="${_result%%$'\n'*}"

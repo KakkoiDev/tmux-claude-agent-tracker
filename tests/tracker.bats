@@ -131,16 +131,54 @@ teardown() {
     [[ "$before" == "$after" ]]
 }
 
-@test "PermissionRequest sets idle to blocked" {
+@test "PermissionRequest no-op when idle" {
     insert_session "s1" "idle" "%1"
     _hook_permission_request "s1"
-    [[ "$(get_status s1)" == "blocked" ]]
+    [[ "$(get_status s1)" == "idle" ]]
 }
 
-@test "PermissionRequest sets completed to blocked" {
+@test "PermissionRequest no-op when completed" {
     insert_session "s1" "completed" "%1"
     _hook_permission_request "s1"
-    [[ "$(get_status s1)" == "blocked" ]]
+    [[ "$(get_status s1)" == "completed" ]]
+}
+
+@test "Stop skips completed when subagents are active" {
+    insert_session "s1" "working" "%1"
+    sql "UPDATE sessions SET subagent_count=2 WHERE session_id='s1';"
+    _hook_stop "s1"
+    [[ "$(get_status s1)" == "working" ]]
+}
+
+@test "Stop sets completed when no subagents active" {
+    insert_session "s1" "working" "%1"
+    sql "UPDATE sessions SET subagent_count=0 WHERE session_id='s1';"
+    _hook_stop "s1"
+    [[ "$(get_status s1)" == "completed" ]]
+}
+
+@test "SubagentStop decrements subagent count" {
+    insert_session "s1" "working" "%1"
+    sql "UPDATE sessions SET subagent_count=3 WHERE session_id='s1';"
+    _hook_subagent_stop "s1"
+    local count
+    count=$(sql "SELECT subagent_count FROM sessions WHERE session_id='s1';")
+    [[ "$count" == "2" ]]
+}
+
+@test "SubagentStop clears blocked to working" {
+    insert_session "s1" "blocked" "%1"
+    sql "UPDATE sessions SET subagent_count=1 WHERE session_id='s1';"
+    _hook_subagent_stop "s1"
+    [[ "$(get_status s1)" == "working" ]]
+}
+
+@test "SubagentStop does not go below zero" {
+    insert_session "s1" "working" "%1"
+    _hook_subagent_stop "s1"
+    local count
+    count=$(sql "SELECT subagent_count FROM sessions WHERE session_id='s1';")
+    [[ "$count" == "0" ]]
 }
 
 @test "PostToolUseFailure transitions blocked to working" {
@@ -149,21 +187,21 @@ teardown() {
     [[ "$(get_status s1)" == "working" ]]
 }
 
-@test "Notification sets idle to blocked" {
+@test "Notification does not set idle to blocked" {
     insert_session "s1" "idle" "%1"
     _hook_notification "s1" '{}'
-    [[ "$(get_status s1)" == "blocked" ]]
+    [[ "$(get_status s1)" == "idle" ]]
 }
 
-@test "Notification after Stop re-blocks completed session" {
+@test "Notification does not re-block completed session" {
     insert_session "s1" "working" "%1"
     _hook_stop "s1"
     [[ "$(get_status s1)" == "completed" ]]
     _hook_notification "s1" '{}'
-    [[ "$(get_status s1)" == "blocked" ]]
+    [[ "$(get_status s1)" == "completed" ]]
     _render_cache
-    [[ "$(cat "$CACHE")" == *"0+"* ]]
-    [[ "$(cat "$CACHE")" == *"1!"* ]]
+    [[ "$(cat "$CACHE")" == *"1+"* ]]
+    [[ "$(cat "$CACHE")" == *"0!"* ]]
 }
 
 @test "Notification does not reset blocked timer" {
@@ -1013,10 +1051,10 @@ _integration_mock() {
     [[ "$(get_status s1)" == "completed" ]]
 }
 
-@test "Notification sets completed to blocked" {
+@test "Notification does not set completed to blocked" {
     insert_session "s1" "completed" "%1"
     _hook_notification "s1" '{}'
-    [[ "$(get_status s1)" == "blocked" ]]
+    [[ "$(get_status s1)" == "completed" ]]
 }
 
 # ── Pane focus ───────────────────────────────────────────────────────
