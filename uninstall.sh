@@ -10,6 +10,7 @@ echo ""
 echo "  - CLI symlink (~/.local/bin/tmux-claude-agent-tracker)"
 echo "  - tmux.conf plugin line"
 echo "  - Claude Code hooks (settings.json)"
+echo "  - Codex notify hook (~/.codex/config.toml)"
 echo "  - Skill file (~/.claude/skills/tmux-claude-agent-tracker/)"
 echo "  - Data directory (~/.tmux-claude-agent-tracker/)"
 echo "  - Live tmux state (status bar, hooks, options)"
@@ -73,6 +74,20 @@ if [[ -f "$CLAUDE_SETTINGS" ]]; then
         echo "jq not found. Manually remove hooks containing 'tmux-claude-agent-tracker' from:"
         echo "  $CLAUDE_SETTINGS"
         echo ""
+    fi
+fi
+
+# ── Codex notify hook ───────────────────────────────────────────────
+
+CODEX_CONFIG="$HOME/.codex/config.toml"
+if [[ -f "$CODEX_CONFIG" ]]; then
+    if grep -Fq '"tmux-claude-agent-tracker", "codex-notify"' "$CODEX_CONFIG"; then
+        if sed --version 2>/dev/null | grep -q GNU; then
+            sed -i '/# tmux-claude-agent-tracker/d; /tmux-claude-agent-tracker", "codex-notify/d' "$CODEX_CONFIG"
+        else
+            sed -i '' '/# tmux-claude-agent-tracker/d; /tmux-claude-agent-tracker", "codex-notify/d' "$CODEX_CONFIG"
+        fi
+        echo "Removed: Codex notify hook from config.toml"
     fi
 fi
 

@@ -1,6 +1,6 @@
 # tmux-claude-agent-tracker
 
-Track [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agent sessions in your tmux status bar. Hook-driven, no daemon, no polling.
+Track [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and Codex agent sessions in your tmux status bar. Hook-driven, no daemon, no polling.
 
 ## Status Bar
 
@@ -24,10 +24,10 @@ Completed (`+`) auto-clears to idle when you focus the pane.
 ```
 Claude Agents
 ─────────────
-! project-a/main
-+ project-b/feature
-* project-c/dev
-. project-d/fix
+! [claude] project-a/main
++ [codex] project-b/feature
+* [claude] project-c/dev
+. [codex] project-d/fix
 ─────────────
 Quit      q
 ```
@@ -35,6 +35,7 @@ Quit      q
 ## How It Works
 
 - Claude Code hooks fire on session events (start, stop, tool use, permission, failure)
+- Codex `notify` events are mapped into tracker state transitions
 - Each hook writes to a local SQLite database and pushes to a tmux option (~35ms)
 - `refresh-client -S` triggers instant display via `#{@claude-tracker-status}`
 - A periodic `#()` refresh keeps the blocked timer current
@@ -70,9 +71,50 @@ The install script:
 2. Initializes the SQLite database
 3. Adds the plugin to `~/.tmux.conf`
 4. Configures Claude Code hooks in `~/.claude/settings.json` (requires `jq`)
-5. Copies the Claude Code skill file to `~/.claude/skills/`
+5. Configures Codex notify hook in `~/.codex/config.toml`
+6. Copies the Claude Code skill file to `~/.claude/skills/`
 
 If `jq` is not installed, the script prints the hook JSON for manual configuration.
+
+## Hook Setup (Claude + Codex)
+
+### Automatic (recommended)
+
+Run:
+
+```bash
+~/.tmux/plugins/tmux-claude-agent-tracker/install.sh --hooks-only
+```
+
+This configures:
+- Claude Code hooks in `~/.claude/settings.json`
+- Codex notify hook in `~/.codex/config.toml`
+
+### Manual setup
+
+Claude (`~/.claude/settings.json`):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook SessionStart" }] }],
+    "SessionEnd": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook SessionEnd" }] }],
+    "UserPromptSubmit": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook UserPromptSubmit" }] }],
+    "PostToolUse": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook PostToolUse" }] }],
+    "PostToolUseFailure": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook PostToolUseFailure" }] }],
+    "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Stop" }] }],
+    "Notification": [{ "matcher": "permission_prompt|elicitation_dialog", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook Notification" }] }],
+    "PermissionRequest": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook PermissionRequest" }] }],
+    "TaskCompleted": [{ "matcher": "", "hooks": [{ "type": "command", "command": "tmux-claude-agent-tracker hook TaskCompleted" }] }]
+  }
+}
+```
+
+Codex (`~/.codex/config.toml`):
+
+```toml
+notify = ["tmux-claude-agent-tracker", "codex-notify"]
+```
 
 ### TPM
 
@@ -92,7 +134,7 @@ Then `prefix + I` to install. TPM runs `claude-tracker.tmux` which automatically
 cd ~/.tmux/plugins/tmux-claude-agent-tracker && ./uninstall.sh
 ```
 
-Removes all artifacts: CLI symlinks, tmux.conf lines, Claude Code hooks, skill file, data directory, and live tmux state.
+Removes all artifacts: CLI symlinks, tmux.conf lines, Claude Code hooks, Codex notify hook, skill file, data directory, and live tmux state.
 
 ## Configuration
 

@@ -1509,6 +1509,39 @@ SCRIPT
     [[ "$total" -eq 1 ]]
 }
 
+@test "cmd_menu prefixes agent client in labels" {
+    insert_session "c1" "working" "%1"
+    sql "UPDATE sessions SET agent_client='codex', tmux_target='test:0.0' WHERE session_id='c1';"
+    local _menu_capture=""
+    tmux() {
+        if [[ "${1:-}" == "display-menu" ]]; then
+            _menu_capture="$*"
+        fi
+        true
+    }
+    cmd_menu 1
+    [[ "$_menu_capture" == *"[codex] test"* ]]
+}
+
+@test "cmd_codex_notify marks completed and tags codex client" {
+    insert_session "s1" "working" "%1"
+    cmd_codex_notify "codex-notify" '{"session_id":"s1","type":"agent-turn-complete","cwd":"/tmp/test"}'
+    [[ "$(get_status s1)" == "completed" ]]
+    local client
+    client=$(sql "SELECT agent_client FROM sessions WHERE session_id='s1';")
+    [[ "$client" == "codex" ]]
+}
+
+@test "cmd_codex_notify falls back to pane-based session id" {
+    export TMUX_PANE="%9"
+    tmux() { echo "test:0.0"; }
+    cmd_codex_notify "codex-notify" '{"type":"agent-turn-complete","cwd":"/tmp/test"}'
+    [[ "$(get_status codex-pane-9)" == "completed" ]]
+    local client
+    client=$(sql "SELECT agent_client FROM sessions WHERE session_id='codex-pane-9';")
+    [[ "$client" == "codex" ]]
+}
+
 @test "_reap_dead still cleans up teammate sessions" {
     insert_session "t1" "idle" "%99"
     sql "UPDATE sessions SET agent_type='teammate' WHERE session_id='t1';"
@@ -1672,6 +1705,21 @@ SCRIPT
     echo '{"session_id":"s1"}' | cmd_hook "PostToolUse"
     [[ -f "$TRACKER_DIR/debug.log" ]]
     [[ "$(cat "$TRACKER_DIR/debug.log")" == *"HOOK PostToolUse sid=s1"* ]]
+}
+
+@test "_ensure_session debug log includes [claude] path prefix" {
+    export DEBUG_LOG="1"
+    local json='{"session_id":"s1","cwd":"/tmp/test"}'
+    _ensure_session "s1" "$json" "idle" "claude"
+    [[ -f "$TRACKER_DIR/debug.log" ]]
+    [[ "$(cat "$TRACKER_DIR/debug.log")" == *"path=[claude] /tmp/test"* ]]
+}
+
+@test "cmd_codex_notify debug log includes [codex] path prefix" {
+    export DEBUG_LOG="1"
+    cmd_codex_notify "codex-notify" '{"session_id":"s1","type":"agent-turn-complete","cwd":"/tmp/test"}'
+    [[ -f "$TRACKER_DIR/debug.log" ]]
+    [[ "$(cat "$TRACKER_DIR/debug.log")" == *"path=[codex] /tmp/test"* ]]
 }
 
 @test "integration: TeammateIdle hides session from render" {

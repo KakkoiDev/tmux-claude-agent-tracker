@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN="$SCRIPT_DIR/bin/tmux-claude-agent-tracker"
 LINK="$HOME/.local/bin/tmux-claude-agent-tracker"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+CODEX_CONFIG="$HOME/.codex/config.toml"
 HOOKS_ONLY=false
 
 for arg in "$@"; do
@@ -178,12 +179,57 @@ install_hooks() {
 
 install_hooks
 
+# ── configure Codex notify hook ──────────────────────────────────────
+
+_print_manual_codex_notify() {
+    cat <<'MANUAL_CODEX'
+
+Add this to ~/.codex/config.toml:
+
+notify = ["tmux-claude-agent-tracker", "codex-notify"]
+
+MANUAL_CODEX
+}
+
+install_codex_notify() {
+    local notify_line='notify = ["tmux-claude-agent-tracker", "codex-notify"]'
+    mkdir -p "$(dirname "$CODEX_CONFIG")"
+
+    if [[ ! -f "$CODEX_CONFIG" ]]; then
+        {
+            echo "# tmux-claude-agent-tracker"
+            echo "$notify_line"
+        } > "$CODEX_CONFIG"
+        echo "codex: created $CODEX_CONFIG with notify hook"
+        return
+    fi
+
+    if grep -Eq '^[[:space:]]*notify[[:space:]]*=' "$CODEX_CONFIG"; then
+        if grep -Fq '"tmux-claude-agent-tracker", "codex-notify"' "$CODEX_CONFIG"; then
+            echo "codex: notify hook already configured"
+            return
+        fi
+        echo "codex: existing notify command found in $CODEX_CONFIG; leaving it unchanged"
+        _print_manual_codex_notify
+        return
+    fi
+
+    {
+        echo ""
+        echo "# tmux-claude-agent-tracker"
+        echo "$notify_line"
+    } >> "$CODEX_CONFIG"
+    echo "codex: added notify hook to $CODEX_CONFIG"
+}
+
+install_codex_notify
+
 # ── done ─────────────────────────────────────────────────────────────
 
 echo ""
 if $HOOKS_ONLY; then
-    echo "Done. Restart Claude Code for hooks to take effect."
+    echo "Done. Restart Claude Code and Codex for hooks to take effect."
 else
     echo "Done. Reload tmux: tmux source ~/.tmux.conf"
-    echo "Then restart Claude Code for hooks to take effect."
+    echo "Then restart Claude Code and Codex for hooks to take effect."
 fi

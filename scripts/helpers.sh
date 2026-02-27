@@ -17,18 +17,20 @@ _file_mtime() {
     esac
 }
 
-# Check if a shell process has a claude child.
+# Check if a shell process has a Claude/Codex child.
 # macOS pgrep -P silently fails for processes that rename argv[0],
 # so fall back to ps-based lookup on Darwin.
 # Uses comm (display name) not ucomm (binary name) to match "claude"
-# specifically, avoiding false positives from generic node processes.
+# or "codex" specifically, avoiding false positives from generic node
+# processes.
 _has_claude_child() {
     local shell_pid="$1"
     case "$(uname)" in
         Darwin)
-            ps -eo ppid,comm | awk -v p="$shell_pid" '$1 == p && $2 == "claude"' | grep -q . ;;
+            ps -eo ppid,comm | awk -v p="$shell_pid" '$1 == p && ($2 == "claude" || $2 == "codex")' | grep -q . ;;
         *)
-            pgrep -P "$shell_pid" -x "claude" >/dev/null 2>/dev/null ;;
+            pgrep -P "$shell_pid" -x "claude" >/dev/null 2>/dev/null || \
+            pgrep -P "$shell_pid" -x "codex" >/dev/null 2>/dev/null ;;
     esac
 }
 

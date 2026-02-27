@@ -14,6 +14,13 @@ CACHE="${CACHE:-$TRACKER_DIR/status_cache}"
 sql() { printf '.timeout 100\n%s\n' "$*" | sqlite3 "$DB"; }
 sql_sep() { local s="$1"; shift; printf '.timeout 100\n%s\n' "$*" | sqlite3 -separator "$s" "$DB"; }
 sql_esc() { local q="'"; printf '%s' "${1//$q/$q$q}"; }
+json_esc() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/ }"
+    printf '%s' "$s"
+}
 
 # ── debug logging ────────────────────────────────────────────────────
 
@@ -54,6 +61,36 @@ _fire_transition_hook() {
     return 0
 }
 
+_ensure_schema() {
+    [[ -f "$DB" ]] || return 0
+    if [[ ! -f "$TRACKER_DIR/.schema_v2" ]]; then
+        sql "ALTER TABLE sessions ADD COLUMN subagent_count INTEGER NOT NULL DEFAULT 0;" 2>/dev/null || true
+        touch "$TRACKER_DIR/.schema_v2"
+    fi
+    if [[ ! -f "$TRACKER_DIR/.schema_v3" ]]; then
+        sql "ALTER TABLE sessions ADD COLUMN agent_client TEXT NOT NULL DEFAULT 'claude';" 2>/dev/null || true
+        touch "$TRACKER_DIR/.schema_v3"
+    fi
+}
+
+_session_client() {
+    local sid="$1"
+    local client
+    client=$(sql "SELECT COALESCE(agent_client,'claude') FROM sessions WHERE session_id='$(sql_esc "$sid")';" 2>/dev/null || true)
+    printf '%s' "${client:-claude}"
+}
+
+_map_codex_event() {
+    local ntype="$1"
+    case "$ntype" in
+        *permission*|*approval*|*consent*) echo "PermissionRequest" ;;
+        *complete*|*completed*|*finish*|*finished*|*done*) echo "Stop" ;;
+        *start*|*started*|*resume*|*resumed*) echo "PostToolUse" ;;
+        *fail*|*failed*|*error*|*reject*|*denied*) echo "PostToolUseFailure" ;;
+        *) echo "PostToolUse" ;;
+    esac
+}
+
 # ── init ──────────────────────────────────────────────────────────────
 
 cmd_init() {
@@ -76,6 +113,7 @@ CREATE TABLE sessions (
     agent_type    TEXT,
     task_count    INTEGER NOT NULL DEFAULT 0,
     subagent_count INTEGER NOT NULL DEFAULT 0,
+    agent_client  TEXT NOT NULL DEFAULT 'claude',
     tmux_pane     TEXT,
     tmux_target   TEXT,
     started_at    INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -89,30 +127,27 @@ SQL
 
 cmd_hook() {
     [[ -f "$DB" ]] || return 0
-    if [[ ! -f "$TRACKER_DIR/.schema_v2" ]]; then
-        sql "ALTER TABLE sessions ADD COLUMN subagent_count INTEGER NOT NULL DEFAULT 0;" 2>/dev/null || true
-        touch "$TRACKER_DIR/.schema_v2"
-    fi
+    _ensure_schema
     _load_config_fast
     local event="$1"
     local json
     read -r json || true
     [[ -z "$json" ]] && json='{}'
 
-    local sid
-    sid=$(_json_val "$json" "session_id")
-    [[ -z "$sid" ]] && return 0
-    sid=$(sql_esc "$sid")
+    local sid raw_sid
+    raw_sid=$(_json_val "$json" "session_id")
+    [[ -z "$raw_sid" ]] && return 0
+    sid=$(sql_esc "$raw_sid")
 
-    _debug_log "HOOK $event sid=$sid"
+    _debug_log "HOOK $event sid=$raw_sid client=$(_session_client "$raw_sid")"
 
     # _ensure_session only for session-creating hooks.
     # Hot-path hooks (PostToolUse, PostToolUseFailure, Notification, PermissionRequest, Stop, TeammateIdle) skip this
     # - their UPDATEs are no-ops if session doesn't exist yet.
     # SessionStart creates as idle; UserPromptSubmit creates as working.
     case "$event" in
-        SessionStart)     _ensure_session "$sid" "$json" "idle" ;;
-        UserPromptSubmit) _ensure_session "$sid" "$json" "working" ;;
+        SessionStart)     _ensure_session "$sid" "$json" "idle" "claude" ;;
+        UserPromptSubmit) _ensure_session "$sid" "$json" "working" "claude" ;;
     esac
 
     local __changed=1 __render="" __json="$json" __old_status="" __teammate_sid=""
@@ -195,7 +230,7 @@ cmd_hook() {
 }
 
 _ensure_session() {
-    local sid="$1" json="${2:-}" init_status="${3:-working}"
+    local sid="$1" json="${2:-}" init_status="${3:-working}" client="${4:-claude}"
 
     # Fast path: session already registered with pane info — skip git/tmux overhead
     local existing
@@ -225,25 +260,67 @@ _ensure_session() {
     if [[ -n "$pane" ]]; then
         sql "DELETE FROM sessions WHERE tmux_pane='$(sql_esc "$pane")' AND session_id!='$sid';
              INSERT OR IGNORE INTO sessions
-             (session_id, status, cwd, project_name, git_branch, agent_type, tmux_pane, tmux_target)
+             (session_id, status, cwd, project_name, git_branch, agent_type, agent_client, tmux_pane, tmux_target)
              VALUES ('$sid', '$init_status',
                      '$(sql_esc "$cwd")', '$(sql_esc "$project")',
-                     '$(sql_esc "$branch")', '$(sql_esc "$atype")',
+                     '$(sql_esc "$branch")', '$(sql_esc "$atype")', '$(sql_esc "$client")',
                      '$(sql_esc "$pane")', '$(sql_esc "$target")');"
     else
         sql "INSERT OR IGNORE INTO sessions
-             (session_id, status, cwd, project_name, git_branch, agent_type, tmux_pane, tmux_target)
+             (session_id, status, cwd, project_name, git_branch, agent_type, agent_client, tmux_pane, tmux_target)
              VALUES ('$sid', '$init_status',
                      '$(sql_esc "$cwd")', '$(sql_esc "$project")',
-                     '$(sql_esc "$branch")', '$(sql_esc "$atype")', '', '');"
+                     '$(sql_esc "$branch")', '$(sql_esc "$atype")', '$(sql_esc "$client")', '', '');"
     fi
 
     # Backfill tmux info if missing (session existed but lacked pane data)
     if [[ -n "$pane" ]]; then
         sql "UPDATE sessions SET tmux_pane='$(sql_esc "$pane")',
-             tmux_target='$(sql_esc "$target")'
+             tmux_target='$(sql_esc "$target")',
+             agent_client='$(sql_esc "$client")'
              WHERE session_id='$sid' AND (tmux_pane IS NULL OR tmux_pane='');"
     fi
+    _debug_log "session_ensure sid=$sid path=[$client] $cwd pane=${pane:-none}"
+}
+
+cmd_codex_notify() {
+    [[ -f "$DB" ]] || return 0
+    _ensure_schema
+
+    local payload="${2:-}"
+    if [[ -z "$payload" ]]; then
+        read -r payload || true
+    fi
+    [[ -z "$payload" ]] && payload='{}'
+
+    local sid ntype cwd event sid_esc synth
+    sid=$(_json_val "$payload" "session_id")
+    [[ -z "$sid" ]] && sid=$(_json_val "$payload" "conversation_id")
+    [[ -z "$sid" ]] && sid=$(_json_val "$payload" "thread_id")
+    [[ -z "$sid" ]] && sid=$(_json_val "$payload" "turn_id")
+    if [[ -z "$sid" && -n "${TMUX_PANE:-}" ]]; then
+        sid="codex-pane-${TMUX_PANE#%}"
+    fi
+    [[ -z "$sid" ]] && return 0
+    sid_esc=$(sql_esc "$sid")
+
+    ntype=$(_json_val "$payload" "type")
+    [[ -z "$ntype" ]] && ntype=$(_json_val "$payload" "event")
+    cwd=$(_json_val "$payload" "cwd")
+    [[ -z "$cwd" ]] && cwd="$PWD"
+
+    # Ensure session exists before we map notify type to a synthetic hook event.
+    synth="{\"session_id\":\"$(json_esc "$sid")\",\"cwd\":\"$(json_esc "$cwd")\"}"
+    _ensure_session "$sid_esc" "$synth" "working" "codex"
+
+    event=$(_map_codex_event "$ntype")
+    if [[ "$event" == "PermissionRequest" ]]; then
+        synth="{\"session_id\":\"$(json_esc "$sid")\",\"cwd\":\"$(json_esc "$cwd")\",\"notification_type\":\"permission_prompt\"}"
+    fi
+
+    printf '%s' "$synth" | cmd_hook "$event"
+    sql "UPDATE sessions SET agent_client='codex', updated_at=unixepoch() WHERE session_id='$sid_esc';"
+    _debug_log "codex_notify type=${ntype:-unknown} sid=$sid event=$event path=[codex] $cwd"
 }
 
 _hook_prompt() {
@@ -487,6 +564,7 @@ cmd_refresh() {
 
 cmd_menu() {
     [[ -f "$DB" ]] || return 0
+    _ensure_schema
     [[ -z "${ITEMS_PER_PAGE:-}" ]] && { load_config 2>/dev/null || true; }
 
     local page="${1:-1}"
@@ -505,7 +583,7 @@ cmd_menu() {
 
     local rows
     rows=$(sql_sep '|' "SELECT session_id, status, project_name,
-               COALESCE(git_branch,''), COALESCE(tmux_target,'')
+               COALESCE(git_branch,''), COALESCE(tmux_target,''), COALESCE(agent_client,'claude')
         FROM sessions
         WHERE COALESCE(agent_type,'')=''
         ORDER BY CASE status
@@ -517,7 +595,7 @@ cmd_menu() {
     [[ "$total_pages" -gt 1 ]] && title="Claude Agents ($page/$total_pages)"
 
     local args=(-T "$title")
-    while IFS='|' read -r _sid status project branch target; do
+    while IFS='|' read -r _sid status project branch target client; do
         [[ -z "$_sid" ]] && continue
         local icon label
         case "$status" in
@@ -527,7 +605,7 @@ cmd_menu() {
             *)         icon="${ICON_IDLE:-.}" ;;
         esac
 
-        label="${icon} ${project}"
+        label="${icon} [${client}] ${project}"
         [[ -n "$branch" ]] && label+="/${branch}"
 
         if [[ -n "$target" ]]; then
@@ -589,10 +667,10 @@ _reap_dead() {
             _debug_log "reap sid=$sid reason=dead_pane"
             sql "DELETE FROM sessions WHERE session_id='$sid';"
             changed=1
-        # Live pane, no claude process, working/blocked → delete (Ctrl+C case)
+        # Live pane, no agent process, working/blocked → delete (Ctrl+C case)
         elif [[ "$st" != "idle" && "$st" != "completed" ]] \
           && ! printf '%s' "$claude_panes" | grep -qx "$pane"; then
-            _debug_log "reap sid=$sid reason=no_claude"
+            _debug_log "reap sid=$sid reason=no_agent"
             sql "DELETE FROM sessions WHERE session_id='$sid';"
             changed=1
         fi
@@ -637,6 +715,7 @@ cmd_cleanup() {
 
 cmd_scan() {
     [[ -f "$DB" ]] || return 0
+    _ensure_schema
 
     # Throttle: scan at most once every 30 seconds
     local stamp="$TRACKER_DIR/.last_scan"
@@ -673,13 +752,14 @@ cmd_scan() {
         # If any session already owns this pane, the INSERT is skipped entirely.
         local sid="scan-${pane}"
         sql "INSERT INTO sessions
-             (session_id, status, cwd, project_name, git_branch, tmux_pane, tmux_target)
+             (session_id, status, cwd, project_name, git_branch, agent_client, tmux_pane, tmux_target)
              SELECT '$(sql_esc "$sid")', 'idle',
                     '$(sql_esc "$cwd")', '$(sql_esc "$project")',
-                    '$(sql_esc "$branch")', '$(sql_esc "$pane")',
+                    '$(sql_esc "$branch")', 'claude', '$(sql_esc "$pane")',
                     '$(sql_esc "$target")'
              WHERE NOT EXISTS (SELECT 1 FROM sessions WHERE tmux_pane='$(sql_esc "$pane")');"
         changed=1
+        _debug_log "scan_detect sid=$sid path=[claude] $cwd pane=$pane"
     done <<< "$pane_ids"
 
     [[ "$changed" -eq 1 ]] && _render_cache
@@ -755,6 +835,7 @@ cmd_pane_focus_if_active() {
 case "${1:-}" in
     init)       cmd_init ;;
     hook)       cmd_hook "${2:?Usage: tracker.sh hook <event>}" ;;
+    codex-notify) cmd_codex_notify "${@}" ;;
     status-bar) cmd_status_bar ;;
     refresh)    cmd_refresh ;;
     menu)       tmux display-message "Opening..." 2>/dev/null || true; _reap_dead 2>/dev/null || true; cmd_scan 2>/dev/null || true; cmd_menu "${2:-1}" ;;
@@ -763,6 +844,6 @@ case "${1:-}" in
     pane-focus-if-active) cmd_pane_focus_if_active "${2:?Usage: tracker.sh pane-focus-if-active <pane_id>}" ;;
     scan)       cmd_scan ;;
     cleanup)    cmd_cleanup ;;
-    *)          echo "Usage: tracker.sh {init|hook|status-bar|refresh|menu|scan|cleanup|goto|pane-focus}" >&2
+    *)          echo "Usage: tracker.sh {init|hook|codex-notify|status-bar|refresh|menu|scan|cleanup|goto|pane-focus}" >&2
                 exit 1 ;;
 esac
