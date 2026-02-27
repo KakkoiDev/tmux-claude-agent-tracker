@@ -297,7 +297,7 @@ _hook_notification() {
     local _result
     _result=$(sql "SELECT status FROM sessions WHERE session_id='$sid';
          UPDATE sessions SET status='blocked', updated_at=unixepoch()
-         WHERE session_id='$sid' AND status IN ('working', 'completed');
+         WHERE session_id='$sid' AND status != 'blocked';
          SELECT CASE WHEN changes() = 0 THEN '' ELSE ($_RENDER_SQL) END;")
     if [[ "$_result" == *$'\n'* ]]; then
         __old_status="${_result%%$'\n'*}"
@@ -317,7 +317,7 @@ _hook_permission_request() {
     local _result
     _result=$(sql "SELECT status FROM sessions WHERE session_id='$sid';
          UPDATE sessions SET status='blocked', updated_at=unixepoch()
-         WHERE session_id='$sid' AND status IN ('working', 'completed');
+         WHERE session_id='$sid' AND status != 'blocked';
          SELECT CASE WHEN changes() = 0 THEN '' ELSE ($_RENDER_SQL) END;")
     if [[ "$_result" == *$'\n'* ]]; then
         __old_status="${_result%%$'\n'*}"

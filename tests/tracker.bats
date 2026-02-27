@@ -131,10 +131,10 @@ teardown() {
     [[ "$before" == "$after" ]]
 }
 
-@test "PermissionRequest no-op when idle" {
+@test "PermissionRequest sets idle to blocked" {
     insert_session "s1" "idle" "%1"
     _hook_permission_request "s1"
-    [[ "$(get_status s1)" == "idle" ]]
+    [[ "$(get_status s1)" == "blocked" ]]
 }
 
 @test "PermissionRequest sets completed to blocked" {
@@ -149,10 +149,10 @@ teardown() {
     [[ "$(get_status s1)" == "working" ]]
 }
 
-@test "Notification does not set idle to blocked" {
+@test "Notification sets idle to blocked" {
     insert_session "s1" "idle" "%1"
     _hook_notification "s1" '{}'
-    [[ "$(get_status s1)" == "idle" ]]
+    [[ "$(get_status s1)" == "blocked" ]]
 }
 
 @test "Notification after Stop re-blocks completed session" {
