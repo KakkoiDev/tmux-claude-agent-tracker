@@ -36,7 +36,6 @@ if ! $HOOKS_ONLY; then
 
 mkdir -p "$(dirname "$LINK")"
 ln -sf "$BIN" "$LINK"
-ln -sf "$SCRIPT_DIR/bin/claude-agent-tracker" "$HOME/.local/bin/claude-agent-tracker"
 echo "CLI: $LINK"
 
 # ── init DB ──────────────────────────────────────────────────────────

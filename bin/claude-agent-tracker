@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-REAL="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
-exec "$REAL/../scripts/tracker.sh" "$@"

@@ -308,7 +308,7 @@ Skips CLI/DB/tmux.conf setup, only configures Claude Code hooks. Used after TPM 
 
 `./uninstall.sh` reverses all install artifacts:
 
-1. CLI symlinks (`~/.local/bin/tmux-claude-agent-tracker`, `claude-agent-tracker`)
+1. CLI symlink (`~/.local/bin/tmux-claude-agent-tracker`)
 2. tmux.conf plugin lines (comment + run-shell line)
 3. Claude Code hooks (jq filter removes entries matching `tmux-claude-agent-tracker`)
 4. Skill file (`~/.claude/skills/tmux-claude-agent-tracker/`)
@@ -367,8 +367,7 @@ tmux-claude-agent-tracker/
 ├── install.sh                   # TPM + manual install
 ├── uninstall.sh                 # Full artifact removal
 ├── bin/
-│   ├── tmux-claude-agent-tracker    # CLI wrapper -> scripts/tracker.sh
-│   └── claude-agent-tracker         # Short alias wrapper
+│   └── tmux-claude-agent-tracker    # CLI wrapper -> scripts/tracker.sh
 └── .claude/skills/
     └── tmux-claude-agent-tracker/
         └── SKILL.md             # Claude Code skill reference (copied to ~/.claude/skills/)

@@ -22,7 +22,6 @@ _link_if_stale() {
 }
 
 _link_if_stale "$CURRENT_DIR/bin/tmux-claude-agent-tracker" "$HOME/.local/bin/tmux-claude-agent-tracker"
-_link_if_stale "$CURRENT_DIR/bin/claude-agent-tracker" "$HOME/.local/bin/claude-agent-tracker"
 
 SKILL_SRC="$CURRENT_DIR/.claude/skills/tmux-claude-agent-tracker/SKILL.md"
 SKILL_DEST="$HOME/.claude/skills/tmux-claude-agent-tracker/SKILL.md"
@@ -59,7 +58,7 @@ tmux set -gq @claude-tracker-status ""
 current_status_right=$(tmux show-option -gqv status-right)
 
 # Strip all tracker injections (legacy, old #() format, new #{@}+#() format)
-current_status_right="${current_status_right//#(claude-agent-tracker status-bar) | /}"
+current_status_right="${current_status_right//#(tmux-claude-agent-tracker status-bar) | /}"
 if [[ "$current_status_right" == *"tracker.sh"* ]] || [[ "$current_status_right" == *"@claude-tracker-status"* ]]; then
     current_status_right=$(printf '%s' "$current_status_right" | sed -E \
         -e 's~#\{@claude-tracker-status\}~~g' \

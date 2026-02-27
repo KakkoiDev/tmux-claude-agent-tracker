@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "This will remove tmux-claude-agent-tracker and all its artifacts:"
 echo ""
-echo "  - CLI symlinks (~/.local/bin/tmux-claude-agent-tracker, claude-agent-tracker)"
+echo "  - CLI symlink (~/.local/bin/tmux-claude-agent-tracker)"
 echo "  - tmux.conf plugin line"
 echo "  - Claude Code hooks (settings.json)"
 echo "  - Skill file (~/.claude/skills/tmux-claude-agent-tracker/)"
@@ -22,7 +22,7 @@ echo ""
 
 # ── CLI symlinks ─────────────────────────────────────────────────────
 
-for link in "$HOME/.local/bin/tmux-claude-agent-tracker" "$HOME/.local/bin/claude-agent-tracker"; do
+for link in "$HOME/.local/bin/tmux-claude-agent-tracker"; do
     if [[ -L "$link" || -f "$link" ]]; then
         rm -f "$link"
         echo "Removed: $link"
