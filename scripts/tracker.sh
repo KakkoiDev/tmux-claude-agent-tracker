@@ -332,7 +332,7 @@ _hook_prompt() {
     local sid="$1"
     __old_status=$(sql "SELECT status FROM sessions WHERE session_id='$sid';")
     _debug_log "prompt sid=$sid old=$__old_status"
-    sql "UPDATE sessions SET status='working', updated_at=unixepoch()
+    sql "UPDATE sessions SET status='working', task_count=0, updated_at=unixepoch()
          WHERE session_id='$sid';"
 }
 

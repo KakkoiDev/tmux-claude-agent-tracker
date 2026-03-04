@@ -1661,6 +1661,23 @@ SCRIPT
     [[ "$tc" -eq 2 ]]
 }
 
+@test "UserPromptSubmit resets task_count to zero" {
+    _integration_mock "%1"
+    echo '{"session_id":"s1","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
+    echo '{"session_id":"s1"}' | cmd_hook "UserPromptSubmit"
+    echo '{"session_id":"s1"}' | cmd_hook "TaskCompleted"
+    echo '{"session_id":"s1"}' | cmd_hook "TaskCompleted"
+    echo '{"session_id":"s1"}' | cmd_hook "TaskCompleted"
+    local tc
+    tc=$(sql "SELECT task_count FROM sessions WHERE session_id='s1';")
+    [[ "$tc" -eq 3 ]]
+
+    # New prompt should reset task_count
+    echo '{"session_id":"s1"}' | cmd_hook "UserPromptSubmit"
+    tc=$(sql "SELECT task_count FROM sessions WHERE session_id='s1';")
+    [[ "$tc" -eq 0 ]]
+}
+
 # ── Worktree detection ──────────────────────────────────────────────
 
 @test "_ensure_session sets agent_type=worktree for worktree cwd" {
