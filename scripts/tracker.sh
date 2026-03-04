@@ -407,10 +407,16 @@ _hook_notification() {
     if [[ -n "$ntype" && "$ntype" != "permission_prompt" && "$ntype" != "elicitation_dialog" && "$ntype" != "ToolPermission" ]]; then
         __changed=0; return 0
     fi
+    # Notification has 4-41s upstream delay. PermissionRequest handles
+    # immediate blocking for tool permissions. Guard against the race where
+    # a late Notification re-blocks a session that PostToolUse already
+    # cleared (user approved the permission, agent resumed working/thinking).
+    # 45s covers the max Notification delay with margin.
     local _result
     _result=$(sql "SELECT status FROM sessions WHERE session_id='$sid';
          UPDATE sessions SET status='blocked', updated_at=unixepoch()
-         WHERE session_id='$sid' AND status = 'working';
+         WHERE session_id='$sid' AND status = 'working'
+         AND updated_at <= unixepoch() - 45;
          SELECT CASE WHEN changes() = 0 THEN '' ELSE ($_RENDER_SQL) END;")
     if [[ "$_result" == *$'\n'* ]]; then
         __old_status="${_result%%$'\n'*}"

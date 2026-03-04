@@ -87,13 +87,13 @@ teardown() {
 }
 
 @test "Notification sets working to blocked" {
-    insert_session "s1" "working" "%1"
+    insert_session "s1" "working" "%1" "unixepoch()-60"
     _hook_notification "s1" '{}'
     [[ "$(get_status s1)" == "blocked" ]]
 }
 
 @test "Notification permission_prompt sets working to blocked" {
-    insert_session "s1" "working" "%1"
+    insert_session "s1" "working" "%1" "unixepoch()-60"
     __json='{"session_id":"s1","notification_type":"permission_prompt"}'
     _hook_notification "s1"
     [[ "$(get_status s1)" == "blocked" ]]
@@ -114,7 +114,7 @@ teardown() {
 }
 
 @test "Notification ToolPermission sets working to blocked" {
-    insert_session "s1" "working" "%1"
+    insert_session "s1" "working" "%1" "unixepoch()-60"
     __json='{"session_id":"s1","notification_type":"ToolPermission"}'
     _hook_notification "s1"
     [[ "$(get_status s1)" == "blocked" ]]
@@ -354,6 +354,21 @@ teardown() {
     ts=$(sql "SELECT updated_at FROM sessions WHERE session_id='s1';")
     # updated_at should still be ~300s ago, not reset
     [[ "$ts" -lt "$(( $(date +%s) - 200 ))" ]]
+}
+
+@test "Late Notification does not re-block recently unblocked session" {
+    # Simulate: PermissionRequest -> blocked, user approves -> PostToolUse -> working
+    # Then late Notification arrives (4-41s delay) and should NOT re-block.
+    insert_session "s1" "working" "%1"
+    _hook_permission_request "s1"
+    [[ "$(get_status s1)" == "blocked" ]]
+    # User approves, PostToolUse clears it
+    _hook_post_tool "s1"
+    [[ "$(get_status s1)" == "working" ]]
+    # Late Notification arrives - should NOT re-block (updated_at too recent)
+    __json='{"session_id":"s1","notification_type":"permission_prompt"}'
+    _hook_notification "s1"
+    [[ "$(get_status s1)" == "working" ]]
 }
 
 @test "PostToolUse sets non-working to working" {
@@ -669,7 +684,7 @@ teardown() {
 }
 
 @test "Notification updates cache when transitioning working to blocked" {
-    insert_session "s1" "working" "%1"
+    insert_session "s1" "working" "%1" "unixepoch()-60"
     _render_cache
     local before
     before=$(cat "$CACHE")
@@ -1044,19 +1059,19 @@ _integration_mock() {
 }
 
 @test "integration: Notification permission_prompt sets blocked" {
-    insert_session "s1" "working" "%1"
+    insert_session "s1" "working" "%1" "unixepoch()-60"
     echo '{"session_id":"s1","notification_type":"permission_prompt"}' | cmd_hook "Notification"
     [[ "$(get_status s1)" == "blocked" ]]
 }
 
 @test "integration: Notification elicitation_dialog sets blocked" {
-    insert_session "s1" "working" "%1"
+    insert_session "s1" "working" "%1" "unixepoch()-60"
     echo '{"session_id":"s1","notification_type":"elicitation_dialog"}' | cmd_hook "Notification"
     [[ "$(get_status s1)" == "blocked" ]]
 }
 
 @test "integration: Notification ToolPermission sets blocked" {
-    insert_session "s1" "working" "%1"
+    insert_session "s1" "working" "%1" "unixepoch()-60"
     echo '{"session_id":"s1","notification_type":"ToolPermission"}' | cmd_hook "Notification"
     [[ "$(get_status s1)" == "blocked" ]]
 }
