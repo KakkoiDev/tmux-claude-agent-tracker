@@ -634,17 +634,40 @@ cmd_merge_sandbox() {
     [[ -f "$sandbox_db" ]] || return 0
 
     # Import sandbox sessions into host DB.
-    # INSERT OR REPLACE: sandbox is authoritative for its sessions.
-    # Safe because session IDs are globally unique (UUID from Claude Code).
-    sqlite3 "$DB" <<SQL
+    # - INSERT OR IGNORE: new sessions from sandbox
+    # - UPDATE only when sandbox has newer data (updated_at comparison)
+    #   Prevents flicker: host clears completed->idle (advancing updated_at),
+    #   merge must not overwrite with stale sandbox completed status.
+    local _changed
+    _changed=$(sqlite3 "$DB" <<SQL
 ATTACH '$sandbox_db' AS sandbox;
-INSERT OR REPLACE INTO sessions
+INSERT OR IGNORE INTO sessions
     SELECT * FROM sandbox.sessions;
+UPDATE sessions SET
+    status = s.status,
+    cwd = s.cwd,
+    project_name = s.project_name,
+    git_branch = s.git_branch,
+    prompt_summary = s.prompt_summary,
+    agent_type = s.agent_type,
+    task_count = s.task_count,
+    subagent_count = s.subagent_count,
+    agent_client = s.agent_client,
+    tmux_pane = CASE WHEN s.tmux_pane != '' THEN s.tmux_pane ELSE sessions.tmux_pane END,
+    tmux_target = CASE WHEN s.tmux_target != '' THEN s.tmux_target ELSE sessions.tmux_target END,
+    updated_at = s.updated_at
+FROM sandbox.sessions AS s
+WHERE sessions.session_id = s.session_id
+  AND s.updated_at > sessions.updated_at;
+SELECT total_changes();
 DETACH sandbox;
 SQL
+    )
 
-    _render_cache 2>/dev/null || true
-    tmux refresh-client -S 2>/dev/null || true
+    if [[ "${_changed:-0}" -gt 0 ]]; then
+        _render_cache 2>/dev/null || true
+        tmux refresh-client -S 2>/dev/null || true
+    fi
 }
 
 # ── refresh (periodic, called by #() for blocked timer) ──────────────
