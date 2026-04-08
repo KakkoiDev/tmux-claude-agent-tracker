@@ -52,6 +52,21 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - Gemini CLI v0.26.0+
 - Bash 3.2+ (macOS default) and Bash 4+/5+ (Linux)
 
+## Deer Sandbox Support
+
+Sessions running inside [deer/deerbox](https://github.com/zdavison/deer) sandboxes are automatically detected via host-side process scanning. The tracker identifies `deerbox` as a child process and registers the session with `[deer]` client tag.
+
+```
+AI Agents
+─────────────
+* [claude] project-a/main
+. [deer]   project-b/feature
+```
+
+**How it works**: Deer's SRT sandbox blocks hook execution (PATH is not available inside the sandbox). Instead of hooks, the tracker's periodic `cmd_scan` detects `deerbox` processes on tmux panes and registers them in the host database. Select a deer session in the menu to navigate to its pane.
+
+**Limitation**: Deer sessions show as idle (`.`) regardless of actual agent state. Full status tracking (working/blocked/completed) requires hooks, which cannot fire inside the sandbox. The session is cleaned up automatically when deerbox exits.
+
 ## Install
 
 ### Requirements
