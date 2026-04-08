@@ -664,6 +664,22 @@ DETACH sandbox;
 SQL
     )
 
+    # Backfill tmux_target for sessions that have pane but no target
+    # (sandbox can't resolve target because tmux socket is inaccessible)
+    local _panes
+    _panes=$(sql "SELECT session_id, tmux_pane FROM sessions
+        WHERE tmux_pane != '' AND (tmux_target IS NULL OR tmux_target='');") || true
+    while IFS='|' read -r _msid _mpane; do
+        [[ -z "$_msid" ]] && continue
+        local _mtarget
+        _mtarget=$(tmux display-message -t "$_mpane" \
+            -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
+        if [[ -n "$_mtarget" ]]; then
+            sql "UPDATE sessions SET tmux_target='$(sql_esc "$_mtarget")'
+                 WHERE session_id='$(sql_esc "$_msid")';"
+        fi
+    done <<< "$_panes"
+
     if [[ "${_changed:-0}" -gt 0 ]]; then
         _render_cache 2>/dev/null || true
         tmux refresh-client -S 2>/dev/null || true
