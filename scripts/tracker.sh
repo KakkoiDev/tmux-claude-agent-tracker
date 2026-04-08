@@ -897,18 +897,22 @@ cmd_scan() {
         target=$(tmux display-message -t "$pane" \
             -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
 
-        # Atomic conditional insert — avoids TOCTOU race with hook-based registration.
+        # Detect agent client type (claude, codex, gemini, deer)
+        local client
+        client=$(_agent_client_type "$shell_pid")
+
+        # Atomic conditional insert - avoids TOCTOU race with hook-based registration.
         # If any session already owns this pane, the INSERT is skipped entirely.
         local sid="scan-${pane}"
         sql "INSERT INTO sessions
              (session_id, status, cwd, project_name, git_branch, agent_client, tmux_pane, tmux_target)
              SELECT '$(sql_esc "$sid")', 'idle',
                     '$(sql_esc "$cwd")', '$(sql_esc "$project")',
-                    '$(sql_esc "$branch")', 'claude', '$(sql_esc "$pane")',
+                    '$(sql_esc "$branch")', '$(sql_esc "$client")', '$(sql_esc "$pane")',
                     '$(sql_esc "$target")'
              WHERE NOT EXISTS (SELECT 1 FROM sessions WHERE tmux_pane='$(sql_esc "$pane")');"
         changed=1
-        _debug_log "scan_detect sid=$sid path=[claude] $cwd pane=$pane"
+        _debug_log "scan_detect sid=$sid path=[$client] $cwd pane=$pane"
     done <<< "$pane_ids"
 
     [[ "$changed" -eq 1 ]] && _render_cache
