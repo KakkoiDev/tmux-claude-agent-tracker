@@ -935,6 +935,15 @@ teardown() {
 
 @test "cmd_refresh produces no stdout" {
     insert_session "s1" "working" "%1"
+    rm -f "$TRACKER_DIR/.last_reap" "$TRACKER_DIR/.last_scan"
+    _has_agent_child() { return 0; }
+    _agent_client_type() { echo "claude"; }
+    tmux() {
+        case "$1" in
+            list-panes) echo "%1 1000" ;;
+            *) true ;;
+        esac
+    }
     local out
     out=$(cmd_refresh)
     [[ -z "$out" ]]
@@ -943,6 +952,15 @@ teardown() {
 @test "cmd_refresh updates cache file" {
     insert_session "s1" "blocked" "%1"
     sql "UPDATE sessions SET updated_at = unixepoch() - 300 WHERE session_id='s1';"
+    rm -f "$TRACKER_DIR/.last_reap" "$TRACKER_DIR/.last_scan"
+    _has_agent_child() { return 0; }
+    _agent_client_type() { echo "claude"; }
+    tmux() {
+        case "$1" in
+            list-panes) echo "%1 1000" ;;
+            *) true ;;
+        esac
+    }
     cmd_refresh
     [[ -f "$CACHE" ]]
     [[ "$(cat "$CACHE")" == *"1!"* ]]
@@ -951,16 +969,19 @@ teardown() {
 
 @test "cmd_refresh skips pane-focus for fresh completed (grace period)" {
     local run_shell_called=0
+    rm -f "$TRACKER_DIR/.last_reap" "$TRACKER_DIR/.last_scan"
+    _has_agent_child() { return 0; }
+    _agent_client_type() { echo "claude"; }
     tmux() {
-        if [[ "${1:-}" == "show-option" && "${3:-}" == "status-interval" ]]; then
-            echo "15"
-        elif [[ "${1:-}" == "run-shell" ]]; then
-            run_shell_called=1
-        fi
-        return 0
+        case "$1" in
+            list-panes) echo "%1 1000" ;;
+            show-option) echo "15" ;;
+            run-shell) run_shell_called=1 ;;
+            *) true ;;
+        esac
     }
 
-    # Completed just now — within grace period
+    # Completed just now - within grace period
     insert_session "s1" "completed" "%1"
     cmd_refresh
     [[ "$run_shell_called" -eq 0 ]]
@@ -968,16 +989,19 @@ teardown() {
 
 @test "cmd_refresh triggers pane-focus for stale completed (past grace period)" {
     local run_shell_called=0
+    rm -f "$TRACKER_DIR/.last_reap" "$TRACKER_DIR/.last_scan"
+    _has_agent_child() { return 0; }
+    _agent_client_type() { echo "claude"; }
     tmux() {
-        if [[ "${1:-}" == "show-option" && "${3:-}" == "status-interval" ]]; then
-            echo "15"
-        elif [[ "${1:-}" == "run-shell" ]]; then
-            run_shell_called=1
-        fi
-        return 0
+        case "$1" in
+            list-panes) echo "%1 1000" ;;
+            show-option) echo "15" ;;
+            run-shell) run_shell_called=1 ;;
+            *) true ;;
+        esac
     }
 
-    # Completed 20 seconds ago — past 15s grace period
+    # Completed 20 seconds ago - past 15s grace period
     insert_session "s1" "completed" "%1"
     sql "UPDATE sessions SET updated_at = unixepoch() - 20 WHERE session_id='s1';"
     cmd_refresh
@@ -986,16 +1010,19 @@ teardown() {
 
 @test "cmd_refresh grace period uses tmux status-interval" {
     local run_shell_called=0
+    rm -f "$TRACKER_DIR/.last_reap" "$TRACKER_DIR/.last_scan"
+    _has_agent_child() { return 0; }
+    _agent_client_type() { echo "claude"; }
     tmux() {
-        if [[ "${1:-}" == "show-option" && "${3:-}" == "status-interval" ]]; then
-            echo "60"
-        elif [[ "${1:-}" == "run-shell" ]]; then
-            run_shell_called=1
-        fi
-        return 0
+        case "$1" in
+            list-panes) echo "%1 1000" ;;
+            show-option) echo "60" ;;
+            run-shell) run_shell_called=1 ;;
+            *) true ;;
+        esac
     }
 
-    # Completed 30 seconds ago — within 60s grace period
+    # Completed 30 seconds ago - within 60s grace period
     insert_session "s1" "completed" "%1"
     sql "UPDATE sessions SET updated_at = unixepoch() - 30 WHERE session_id='s1';"
     cmd_refresh
@@ -2150,4 +2177,276 @@ SCRIPT
     [[ "$(get_status concurrent-s1)" == "working" ]]
     [[ "$(get_status concurrent-s2)" == "idle" ]]
     _SANDBOX=0
+}
+
+# ── Deerbox scan/reap lifecycle ──────────────────────────────────────
+
+@test "cmd_scan detects deerbox pane and registers deer session" {
+    # Remove throttle stamp so scan actually runs
+    rm -f "$TRACKER_DIR/.last_scan"
+
+    tmux() {
+        case "$1" in
+            list-panes) echo "%20 5000" ;;
+            display-message) echo "/tmp/deer-project" ;;  # cwd or target
+            *) true ;;
+        esac
+    }
+    _has_agent_child() { return 0; }
+    _agent_client_type() { echo "deer"; }
+
+    cmd_scan
+
+    [[ "$(count_sessions)" -eq 1 ]]
+    local status client pane
+    status=$(get_status "scan-%20")
+    client=$(sql "SELECT agent_client FROM sessions WHERE session_id='scan-%20';")
+    pane=$(sql "SELECT tmux_pane FROM sessions WHERE session_id='scan-%20';")
+    [[ "$status" == "idle" ]]
+    [[ "$client" == "deer" ]]
+    [[ "$pane" == "%20" ]]
+}
+
+@test "cmd_scan detects claude pane and registers claude session" {
+    rm -f "$TRACKER_DIR/.last_scan"
+
+    tmux() {
+        case "$1" in
+            list-panes) echo "%21 6000" ;;
+            display-message) echo "/tmp/claude-project" ;;
+            *) true ;;
+        esac
+    }
+    _has_agent_child() { return 0; }
+    _agent_client_type() { echo "claude"; }
+
+    cmd_scan
+
+    local client
+    client=$(sql "SELECT agent_client FROM sessions WHERE session_id='scan-%21';")
+    [[ "$client" == "claude" ]]
+}
+
+@test "cmd_scan throttle prevents re-scan within 30s" {
+    # First scan succeeds
+    rm -f "$TRACKER_DIR/.last_scan"
+    tmux() {
+        case "$1" in
+            list-panes) echo "%22 7000" ;;
+            display-message) echo "/tmp/test" ;;
+            *) true ;;
+        esac
+    }
+    _has_agent_child() { return 0; }
+    _agent_client_type() { echo "deer"; }
+
+    cmd_scan
+    [[ "$(count_sessions)" -eq 1 ]]
+
+    # Delete session manually, second scan should be throttled
+    sql "DELETE FROM sessions;"
+    cmd_scan
+    [[ "$(count_sessions)" -eq 0 ]]  # throttled, no re-insert
+}
+
+@test "cmd_scan skips pane when session already exists for that pane" {
+    rm -f "$TRACKER_DIR/.last_scan"
+    # Pre-existing hook-registered session owns pane %23
+    insert_session "hook-s1" "working" "%23"
+
+    tmux() {
+        case "$1" in
+            list-panes) echo "%23 8000" ;;
+            display-message) echo "/tmp/test" ;;
+            *) true ;;
+        esac
+    }
+    _has_agent_child() { return 0; }
+    _agent_client_type() { echo "deer"; }
+
+    cmd_scan
+
+    # Only the hook session, no scan session
+    [[ "$(count_sessions)" -eq 1 ]]
+    [[ "$(get_status hook-s1)" == "working" ]]
+}
+
+@test "_reap_dead deletes deer session when deerbox exits" {
+    # Deer session exists on pane %24
+    insert_session "scan-%24" "idle" "%24"
+    sql "UPDATE sessions SET agent_client='deer' WHERE session_id='scan-%24';"
+    rm -f "$TRACKER_DIR/.last_reap"
+
+    # Pane alive but NO agent child (deerbox exited)
+    tmux() {
+        case "$1" in
+            list-panes) echo "%24 9000" ;;
+            *) true ;;
+        esac
+    }
+    _has_agent_child() { return 1; }  # no agent found
+
+    _reap_dead
+    [[ "$(count_sessions)" -eq 0 ]]
+}
+
+@test "_reap_dead keeps deer session when deerbox is running" {
+    insert_session "scan-%25" "idle" "%25"
+    sql "UPDATE sessions SET agent_client='deer' WHERE session_id='scan-%25';"
+    rm -f "$TRACKER_DIR/.last_reap"
+
+    # Pane alive WITH agent child (deerbox running)
+    tmux() {
+        case "$1" in
+            list-panes) echo "%25 9100" ;;
+            *) true ;;
+        esac
+    }
+    _has_agent_child() { return 0; }  # agent found
+
+    _reap_dead
+    [[ "$(count_sessions)" -eq 1 ]]
+    [[ "$(get_status 'scan-%25')" == "idle" ]]
+}
+
+@test "_reap_dead deletes deer session when pane is closed" {
+    insert_session "scan-%26" "idle" "%26"
+    sql "UPDATE sessions SET agent_client='deer' WHERE session_id='scan-%26';"
+    rm -f "$TRACKER_DIR/.last_reap"
+
+    # Pane %26 is gone, only %1 exists
+    tmux() {
+        case "$1" in
+            list-panes) echo "%1 1000" ;;
+            *) true ;;
+        esac
+    }
+    _has_agent_child() { return 1; }
+
+    _reap_dead
+    [[ "$(count_sessions)" -eq 0 ]]
+}
+
+@test "_reap_dead throttle prevents re-reap within 30s" {
+    insert_session "scan-%27" "idle" "%27"
+    rm -f "$TRACKER_DIR/.last_reap"
+
+    tmux() {
+        case "$1" in
+            list-panes) echo "%27 9200" ;;
+            *) true ;;
+        esac
+    }
+    _has_agent_child() { return 1; }  # no agent
+
+    # First reap succeeds
+    _reap_dead
+    [[ "$(count_sessions)" -eq 0 ]]
+
+    # Re-insert, second reap should be throttled
+    insert_session "scan-%27" "idle" "%27"
+    _reap_dead
+    [[ "$(count_sessions)" -eq 1 ]]  # throttled, session survives
+}
+
+@test "integration: deerbox scan -> run -> exit -> reap lifecycle" {
+    rm -f "$TRACKER_DIR/.last_scan" "$TRACKER_DIR/.last_reap"
+
+    # Phase 1: deerbox starts, scan detects it
+    tmux() {
+        case "$1" in
+            list-panes) echo "%30 10000" ;;
+            display-message) echo "/tmp/deer-project" ;;
+            *) true ;;
+        esac
+    }
+    _has_agent_child() { return 0; }
+    _agent_client_type() { echo "deer"; }
+
+    cmd_scan
+    [[ "$(count_sessions)" -eq 1 ]]
+    [[ "$(get_status 'scan-%30')" == "idle" ]]
+    local client
+    client=$(sql "SELECT agent_client FROM sessions WHERE session_id='scan-%30';")
+    [[ "$client" == "deer" ]]
+
+    # Phase 2: deerbox exits, reap cleans up
+    rm -f "$TRACKER_DIR/.last_reap"
+    _has_agent_child() { return 1; }  # deerbox gone
+
+    _reap_dead
+    [[ "$(count_sessions)" -eq 0 ]]
+}
+
+@test "integration: scan in cmd_refresh detects deerbox" {
+    rm -f "$TRACKER_DIR/.last_scan"
+
+    tmux() {
+        case "$1" in
+            list-panes) echo "%31 11000" ;;
+            display-message) echo "/tmp/test" ;;
+            show-option) echo "15" ;;
+            run-shell) true ;;
+            refresh-client) true ;;
+            *) true ;;
+        esac
+    }
+    _has_agent_child() { return 0; }
+    _agent_client_type() { echo "deer"; }
+
+    cmd_refresh
+    [[ "$(count_sessions)" -eq 1 ]]
+    [[ "$(get_status 'scan-%31')" == "idle" ]]
+}
+
+@test "integration: reap in cmd_refresh cleans exited deerbox" {
+    insert_session "scan-%33" "idle" "%33"
+    sql "UPDATE sessions SET agent_client='deer' WHERE session_id='scan-%33';"
+    rm -f "$TRACKER_DIR/.last_reap" "$TRACKER_DIR/.last_scan"
+
+    # Deerbox exited, pane still alive
+    tmux() {
+        case "$1" in
+            list-panes) echo "%33 13000" ;;
+            display-message) echo "/tmp/test" ;;
+            show-option) echo "15" ;;
+            run-shell) true ;;
+            refresh-client) true ;;
+            *) true ;;
+        esac
+    }
+    _has_agent_child() { return 1; }  # no agent
+    _agent_client_type() { echo "claude"; }
+
+    cmd_refresh
+
+    # Reap ran inside refresh and cleaned up the exited deerbox
+    [[ "$(count_sessions)" -eq 0 ]]
+}
+
+@test "integration: reap in menu open cleans exited deerbox" {
+    insert_session "scan-%32" "idle" "%32"
+    sql "UPDATE sessions SET agent_client='deer' WHERE session_id='scan-%32';"
+    rm -f "$TRACKER_DIR/.last_reap" "$TRACKER_DIR/.last_scan"
+
+    # Deerbox exited, pane still alive
+    tmux() {
+        case "$1" in
+            list-panes) echo "%32 12000" ;;
+            display-message)
+                if [[ "${*}" == *"pane_current_path"* ]]; then
+                    echo "/tmp/test"
+                else
+                    echo "No active AI agents"
+                fi ;;
+            display-menu) true ;;
+            *) true ;;
+        esac
+    }
+    _has_agent_child() { return 1; }  # no agent
+    _agent_client_type() { echo "claude"; }
+
+    # _reap_dead runs before cmd_menu in the menu dispatch
+    _reap_dead
+    [[ "$(count_sessions)" -eq 0 ]]
 }
