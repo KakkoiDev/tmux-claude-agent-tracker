@@ -704,6 +704,8 @@ cmd_refresh() {
     if [[ -n "$has_stale_completed" ]]; then
         tmux run-shell -b "$SCRIPTS_DIR/tracker.sh pane-focus #{pane_id}" 2>/dev/null || true
     fi
+    # Detect unregistered agent panes (deerbox hooks can't fire in sandbox)
+    cmd_scan 2>/dev/null || true
     # Merge sandbox sessions if any
     cmd_merge_sandbox 2>/dev/null || true
     # No stdout; display comes from #{@claude-tracker-status}
