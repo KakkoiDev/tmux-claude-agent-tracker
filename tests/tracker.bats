@@ -1953,7 +1953,6 @@ SCRIPT
 @test "cmd_merge_sandbox imports new sessions into host DB" {
     # Host DB is the normal test DB
     local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
-    rm -f "$sandbox_db"
     create_sandbox_db "$sandbox_db"
     insert_session_into "$sandbox_db" "sandbox-s1" "working" "deer"
 
@@ -1965,12 +1964,10 @@ SCRIPT
     local client
     client=$(sql "SELECT agent_client FROM sessions WHERE session_id='sandbox-s1';")
     [[ "$client" == "deer" ]]
-    rm -f "$sandbox_db"
 }
 
 @test "cmd_merge_sandbox does not overwrite newer host data" {
     local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
-    rm -f "$sandbox_db"
     create_sandbox_db "$sandbox_db"
 
     # Sandbox has completed session at timestamp 1000
@@ -1985,12 +1982,10 @@ SCRIPT
     local status
     status=$(get_status "flicker-s1")
     [[ "$status" == "idle" ]]
-    rm -f "$sandbox_db"
 }
 
 @test "cmd_merge_sandbox updates host when sandbox has newer data" {
     local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
-    rm -f "$sandbox_db"
     create_sandbox_db "$sandbox_db"
 
     # Host has idle session at timestamp 1000
@@ -2005,12 +2000,10 @@ SCRIPT
     local status
     status=$(get_status "update-s1")
     [[ "$status" == "working" ]]
-    rm -f "$sandbox_db"
 }
 
 @test "cmd_merge_sandbox backfills tmux_target from tmux_pane" {
     local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
-    rm -f "$sandbox_db"
     create_sandbox_db "$sandbox_db"
 
     # Sandbox session has pane but no target
@@ -2030,12 +2023,10 @@ SCRIPT
     local target
     target=$(sql "SELECT tmux_target FROM sessions WHERE session_id='backfill-s1';")
     [[ "$target" == "main:0.1" ]]
-    rm -f "$sandbox_db"
 }
 
 @test "cmd_merge_sandbox preserves host tmux_pane when sandbox has empty" {
     local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
-    rm -f "$sandbox_db"
     create_sandbox_db "$sandbox_db"
 
     # Host has pane info, sandbox doesn't
@@ -2047,7 +2038,6 @@ SCRIPT
     local pane
     pane=$(sql "SELECT tmux_pane FROM sessions WHERE session_id='pane-keep-s1';")
     [[ "$pane" == "%5" ]]
-    rm -f "$sandbox_db"
 }
 
 @test "cmd_merge_sandbox no-op when no sandbox DB exists" {
@@ -2058,7 +2048,6 @@ SCRIPT
 
 @test "cmd_merge_sandbox skips render when nothing changed" {
     local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
-    rm -f "$sandbox_db"
     create_sandbox_db "$sandbox_db"
 
     # Same session, same data, same timestamp - no update
@@ -2076,7 +2065,6 @@ SCRIPT
     local status
     status=$(get_status "no-change-s1")
     [[ "$status" == "idle" ]]
-    rm -f "$sandbox_db"
 }
 
 @test "integration: sandbox session lifecycle" {
@@ -2112,7 +2100,6 @@ SCRIPT
 
 @test "integration: sandbox merge then host pane-focus does not flicker" {
     local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
-    rm -f "$sandbox_db"
     create_sandbox_db "$sandbox_db"
 
     # Sandbox session completed
@@ -2131,7 +2118,6 @@ SCRIPT
     # Host has idle at timestamp 2000 (newer) - must NOT overwrite
     cmd_merge_sandbox
     [[ "$(get_status flicker-int-s1)" == "idle" ]]
-    rm -f "$sandbox_db"
 }
 
 @test "integration: multiple concurrent sandbox sessions" {

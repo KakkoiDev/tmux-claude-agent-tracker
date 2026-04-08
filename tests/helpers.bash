@@ -59,6 +59,13 @@ SQL
 
 teardown_test_env() {
     [[ -d "${TEST_TMPDIR:-}" ]] && rm -rf "$TEST_TMPDIR"
+    [[ -d "${SANDBOX_DB_DIR:-}" ]] && rm -rf "$SANDBOX_DB_DIR"
+    # Clean shared sandbox DB to avoid leftover merge data
+    rm -f /tmp/tmux-claude-agent-tracker-sandbox.db \
+          /tmp/tmux-claude-agent-tracker-sandbox.db-wal \
+          /tmp/tmux-claude-agent-tracker-sandbox.db-shm \
+          /tmp/tmux-claude-agent-tracker-sandbox-cache \
+          /tmp/tmux-claude-agent-tracker-sandbox-cache.tmp
 }
 
 # Direct SQL helper
