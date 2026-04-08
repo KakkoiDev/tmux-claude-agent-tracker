@@ -818,8 +818,10 @@ _reap_dead() {
             _debug_log "reap sid=$sid reason=dead_pane"
             sql "DELETE FROM sessions WHERE session_id='$sid';"
             changed=1
-        # Live pane, no agent process, working/blocked → delete (Ctrl+C case)
-        elif [[ "$st" != "idle" && "$st" != "completed" ]] \
+        # Live pane, no agent process, not completed -> delete
+        # Covers: working/blocked (Ctrl+C), idle (deerbox exited, /exit)
+        # Completed excluded: brief display window before auto-clear
+        elif [[ "$st" != "completed" ]] \
           && ! printf '%s' "$claude_panes" | grep -qx "$pane"; then
             _debug_log "reap sid=$sid reason=no_agent"
             sql "DELETE FROM sessions WHERE session_id='$sid';"

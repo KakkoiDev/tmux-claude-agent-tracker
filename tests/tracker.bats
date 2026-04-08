@@ -545,7 +545,7 @@ teardown() {
     [[ "$(get_status s2)" == "working" ]]
 }
 
-@test "_reap_dead keeps idle sessions even without claude process" {
+@test "_reap_dead deletes idle sessions without agent process" {
     insert_session "s1" "idle" "%10"
 
     tmux() {
@@ -555,6 +555,21 @@ teardown() {
         esac
     }
     _has_agent_child() { return 1; }
+
+    _reap_dead
+    [[ "$(count_sessions)" -eq 0 ]]
+}
+
+@test "_reap_dead keeps idle sessions when agent process exists" {
+    insert_session "s1" "idle" "%10"
+
+    tmux() {
+        case "$1" in
+            list-panes) echo "%10 1234" ;;
+            *) true ;;
+        esac
+    }
+    _has_agent_child() { return 0; }
 
     _reap_dead
     [[ "$(get_status s1)" == "idle" ]]
