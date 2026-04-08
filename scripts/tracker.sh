@@ -802,7 +802,7 @@ _reap_dead() {
         local now age
         now=$(date +%s)
         age=$(( now - $(_file_mtime "$stamp" 2>/dev/null || echo 0) ))
-        [[ "$age" -lt 30 ]] && return 0
+        [[ "$age" -lt 10 ]] && return 0
     fi
     touch "$stamp"
 
@@ -884,7 +884,7 @@ cmd_scan() {
         local now age
         now=$(date +%s)
         age=$(( now - $(_file_mtime "$stamp" 2>/dev/null || echo 0) ))
-        [[ "$age" -lt 30 ]] && return 0
+        [[ "$age" -lt 10 ]] && return 0
     fi
     touch "$stamp"
 

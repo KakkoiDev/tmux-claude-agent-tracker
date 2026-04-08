@@ -523,7 +523,7 @@ teardown() {
     [[ "$(get_status fresh-no-pane)" == "working" ]]
 }
 
-@test "_reap_dead throttle prevents second call within 30s" {
+@test "_reap_dead throttle prevents second call within 10s" {
     insert_session "s1" "working" "%99"
 
     tmux() {
@@ -540,7 +540,7 @@ teardown() {
     # Insert a dead-pane session after first reap
     insert_session "s2" "working" "%200"
 
-    # Second call within 30s should be throttled — s2 survives
+    # Second call within 10s should be throttled — s2 survives
     _reap_dead
     [[ "$(get_status s2)" == "working" ]]
 }
@@ -2227,7 +2227,7 @@ SCRIPT
     [[ "$client" == "claude" ]]
 }
 
-@test "cmd_scan throttle prevents re-scan within 30s" {
+@test "cmd_scan throttle prevents re-scan within 10s" {
     # First scan succeeds
     rm -f "$TRACKER_DIR/.last_scan"
     tmux() {
@@ -2327,7 +2327,7 @@ SCRIPT
     [[ "$(count_sessions)" -eq 0 ]]
 }
 
-@test "_reap_dead throttle prevents re-reap within 30s" {
+@test "_reap_dead throttle prevents re-reap within 10s" {
     insert_session "scan-%27" "idle" "%27"
     rm -f "$TRACKER_DIR/.last_reap"
 
