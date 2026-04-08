@@ -11,6 +11,28 @@ TRACKER_DIR="${TRACKER_DIR:-$HOME/.tmux-claude-agent-tracker}"
 DB="${DB:-$TRACKER_DIR/tracker.db}"
 CACHE="${CACHE:-$TRACKER_DIR/status_cache}"
 
+# -- sandbox fallback ------------------------------------------------
+# If TRACKER_DIR is not writable (e.g., deer/deerbox SRT sandbox),
+# fall back to /tmp. The host-side tracker keeps the real DB; sandbox
+# sessions write to a temp DB that the host merges on refresh.
+#
+# Detection: attempt a real write probe. Bash's -w only checks
+# permission bits, which are unchanged inside macOS sandbox-exec.
+# The sandbox intercepts at the syscall level, so -w returns true
+# but actual writes fail. A probe write is the only reliable test.
+_SANDBOX=0
+if [[ -d "$TRACKER_DIR" ]]; then
+    _probe="$TRACKER_DIR/.sandbox-probe.$$"
+    if ! touch "$_probe" 2>/dev/null; then
+        _SANDBOX=1
+        DB="/tmp/tmux-claude-agent-tracker-sandbox.db"
+        CACHE="/tmp/tmux-claude-agent-tracker-sandbox-cache"
+    else
+        rm -f "$_probe" 2>/dev/null
+    fi
+    unset _probe
+fi
+
 sql() { printf '.timeout 100\n%s\n' "$*" | sqlite3 "$DB"; }
 sql_sep() { local s="$1"; shift; printf '.timeout 100\n%s\n' "$*" | sqlite3 -separator "$s" "$DB"; }
 sql_esc() { local q="'"; printf '%s' "${1//$q/$q$q}"; }
@@ -50,6 +72,11 @@ _RENDER_SQL="SELECT
     COALESCE(SUM(CASE WHEN status='completed' AND task_count > 0 THEN task_count WHEN status='completed' THEN 1 ELSE 0 END),0) || '|' ||
     COALESCE((SELECT (unixepoch()-MIN(updated_at))/60 FROM sessions WHERE status='blocked' AND COALESCE(agent_type,'')=''),0)
     FROM sessions WHERE COALESCE(agent_type,'')=''"
+
+_tmux() {
+    [[ "$_SANDBOX" -eq 1 ]] && return 0
+    tmux "$@"
+}
 
 _fire_transition_hook() {
     local from="$1" to="$2" sid="$3" project="$4"
@@ -94,6 +121,33 @@ _map_codex_event() {
 # ── init ──────────────────────────────────────────────────────────────
 
 cmd_init() {
+    if [[ "$_SANDBOX" -eq 1 ]]; then
+        # Init sandbox DB in /tmp (writable in SRT sandbox)
+        # IF NOT EXISTS: multiple deerbox instances share this DB
+        sqlite3 "$DB" <<'SQL'
+PRAGMA journal_mode=WAL;
+PRAGMA busy_timeout=100;
+CREATE TABLE IF NOT EXISTS sessions (
+    session_id    TEXT PRIMARY KEY,
+    status        TEXT NOT NULL DEFAULT 'working'
+        CHECK(status IN ('working', 'blocked', 'idle', 'completed')),
+    cwd           TEXT NOT NULL,
+    project_name  TEXT NOT NULL,
+    git_branch    TEXT,
+    prompt_summary TEXT,
+    agent_type    TEXT,
+    task_count    INTEGER NOT NULL DEFAULT 0,
+    subagent_count INTEGER NOT NULL DEFAULT 0,
+    agent_client  TEXT NOT NULL DEFAULT 'claude',
+    tmux_pane     TEXT,
+    tmux_target   TEXT,
+    started_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at    INTEGER NOT NULL DEFAULT (unixepoch())
+);
+SQL
+        echo "Initialized sandbox DB: $DB"
+        return
+    fi
     mkdir -p "$TRACKER_DIR"
     sqlite3 "$DB" <<'SQL'
 PRAGMA journal_mode=WAL;
@@ -126,8 +180,12 @@ SQL
 # ── hook ──────────────────────────────────────────────────────────────
 
 cmd_hook() {
+    # Auto-init sandbox DB on first hook
+    if [[ "$_SANDBOX" -eq 1 ]] && [[ ! -f "$DB" ]]; then
+        cmd_init
+    fi
     [[ -f "$DB" ]] || return 0
-    _ensure_schema
+    [[ "$_SANDBOX" -eq 0 ]] && _ensure_schema
     _load_config_fast
     local event="$1"
     local json
@@ -146,8 +204,14 @@ cmd_hook() {
     # - their UPDATEs are no-ops if session doesn't exist yet.
     # SessionStart creates as idle; UserPromptSubmit creates as working.
     case "$event" in
-        SessionStart)     _ensure_session "$sid" "$json" "idle" "claude" ;;
-        UserPromptSubmit) _ensure_session "$sid" "$json" "working" "claude" ;;
+        SessionStart)
+            local _client="claude"
+            [[ "$_SANDBOX" -eq 1 ]] && _client="deer"
+            _ensure_session "$sid" "$json" "idle" "$_client" ;;
+        UserPromptSubmit)
+            local _client="claude"
+            [[ "$_SANDBOX" -eq 1 ]] && _client="deer"
+            _ensure_session "$sid" "$json" "working" "$_client" ;;
     esac
 
     local __changed=1 __render="" __json="$json" __old_status="" __teammate_sid=""
@@ -180,19 +244,20 @@ cmd_hook() {
     esac
 
     # Reap stale sessions on events that create/wake sessions
+    # Skip in sandbox - no tmux pane list to cross-reference
     case "$event" in
         SessionStart|UserPromptSubmit)
-            _reap_dead 2>/dev/null || true ;;
+            [[ "$_SANDBOX" -eq 0 ]] && _reap_dead 2>/dev/null || true ;;
     esac
 
     if [[ -n "$__render" ]]; then
         # Fast path: render data already fetched in same sqlite3 call
         _load_config_fast
         _write_cache "$__render" 2>/dev/null || _render_cache 2>/dev/null || true
-        tmux refresh-client -S 2>/dev/null || true
+        _tmux refresh-client -S 2>/dev/null || true
     elif [[ "$__changed" -eq 1 ]]; then
         _render_cache 2>/dev/null || true
-        tmux refresh-client -S 2>/dev/null || true
+        _tmux refresh-client -S 2>/dev/null || true
     fi
 
     # Fire transition hooks
@@ -245,7 +310,7 @@ _ensure_session() {
     pane="${TMUX_PANE:-}"
     target=""
     if [[ -n "$pane" ]]; then
-        target=$(tmux display-message -t "$pane" \
+        target=$(_tmux display-message -t "$pane" \
             -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
     fi
 
@@ -284,8 +349,11 @@ _ensure_session() {
 }
 
 cmd_codex_notify() {
+    if [[ "$_SANDBOX" -eq 1 ]] && [[ ! -f "$DB" ]]; then
+        cmd_init
+    fi
     [[ -f "$DB" ]] || return 0
-    _ensure_schema
+    [[ "$_SANDBOX" -eq 0 ]] && _ensure_schema
 
     local payload="${2:-}"
     if [[ -z "$payload" ]]; then
@@ -376,7 +444,7 @@ _hook_stop() {
     _load_config_fast
     local delay="${COMPLETED_DELAY:-3}"
     if [[ -n "${TMUX_PANE:-}" && "$delay" -gt 0 ]] 2>/dev/null; then
-        tmux run-shell -b "sleep $delay && $SCRIPTS_DIR/tracker.sh pane-focus-if-active $TMUX_PANE" 2>/dev/null || true
+        _tmux run-shell -b "sleep $delay && $SCRIPTS_DIR/tracker.sh pane-focus-if-active $TMUX_PANE" 2>/dev/null || true
     fi
 }
 
@@ -477,6 +545,15 @@ _hook_teammate_idle() {
 # Full load_config (with freshness) runs on status-bar/menu paths.
 _load_config_fast() {
     [[ -n "${COLOR_WORKING:-}" ]] && return 0
+    if [[ "$_SANDBOX" -eq 1 ]]; then
+        # Hardcode defaults - no tmux option access in sandbox
+        COLOR_WORKING="black"; COLOR_BLOCKED="black"
+        COLOR_IDLE="black"; COLOR_COMPLETED="black"
+        ICON_IDLE="."; ICON_WORKING="*"
+        ICON_COMPLETED="+"; ICON_BLOCKED="!"
+        COMPLETED_DELAY=3; DEBUG_LOG=0; _HAS_HOOKS=0
+        return 0
+    fi
     local _cc="$TRACKER_DIR/config_cache"
     if [[ -f "$_cc" ]]; then
         source "$_cc"
@@ -516,7 +593,7 @@ _write_cache() {
     mv -f "$CACHE.tmp" "$CACHE"
     # Push to tmux option for instant display via #{@claude-tracker-status}
     # (#{@option} is re-evaluated on refresh-client -S, unlike #() which is cached)
-    tmux set -gq @claude-tracker-status "$final" 2>/dev/null || true
+    _tmux set -gq @claude-tracker-status "$final" 2>/dev/null || true
 }
 
 _render_cache() {
@@ -550,6 +627,26 @@ cmd_status_bar() {
     [[ -f "$CACHE" ]] && cat "$CACHE"
 }
 
+# ── merge sandbox ────────────────────────────────────────────────────
+
+cmd_merge_sandbox() {
+    local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
+    [[ -f "$sandbox_db" ]] || return 0
+
+    # Import sandbox sessions into host DB.
+    # INSERT OR REPLACE: sandbox is authoritative for its sessions.
+    # Safe because session IDs are globally unique (UUID from Claude Code).
+    sqlite3 "$DB" <<SQL
+ATTACH '$sandbox_db' AS sandbox;
+INSERT OR REPLACE INTO sessions
+    SELECT * FROM sandbox.sessions;
+DETACH sandbox;
+SQL
+
+    _render_cache 2>/dev/null || true
+    tmux refresh-client -S 2>/dev/null || true
+}
+
 # ── refresh (periodic, called by #() for blocked timer) ──────────────
 
 cmd_refresh() {
@@ -568,7 +665,9 @@ cmd_refresh() {
     if [[ -n "$has_stale_completed" ]]; then
         tmux run-shell -b "$SCRIPTS_DIR/tracker.sh pane-focus #{pane_id}" 2>/dev/null || true
     fi
-    # No stdout — #() renders empty string; display comes from #{@claude-tracker-status}
+    # Merge sandbox sessions if any
+    cmd_merge_sandbox 2>/dev/null || true
+    # No stdout; display comes from #{@claude-tracker-status}
 }
 
 # ── menu ──────────────────────────────────────────────────────────────
@@ -855,6 +954,7 @@ case "${1:-}" in
     pane-focus-if-active) cmd_pane_focus_if_active "${2:?Usage: tracker.sh pane-focus-if-active <pane_id>}" ;;
     scan)       cmd_scan ;;
     cleanup)    cmd_cleanup ;;
-    *)          echo "Usage: tracker.sh {init|hook|codex-notify|status-bar|refresh|menu|scan|cleanup|goto|pane-focus}" >&2
+    merge-sandbox) cmd_merge_sandbox ;;
+    *)          echo "Usage: tracker.sh {init|hook|codex-notify|status-bar|refresh|menu|scan|cleanup|merge-sandbox|goto|pane-focus}" >&2
                 exit 1 ;;
 esac
