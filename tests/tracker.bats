@@ -2450,3 +2450,75 @@ SCRIPT
     _reap_dead
     [[ "$(count_sessions)" -eq 0 ]]
 }
+
+@test "cmd_merge_sandbox evicts scan duplicate when real session owns same pane" {
+    local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
+    create_sandbox_db "$sandbox_db"
+
+    # Scan detected deerbox first
+    insert_session "scan-%40" "idle" "%40"
+    sql "UPDATE sessions SET agent_client='deer' WHERE session_id='scan-%40';"
+
+    # Sandbox has the real session for the same pane
+    insert_session_into "$sandbox_db" "real-uuid-1" "working" "deer" "%40"
+
+    cmd_merge_sandbox
+
+    # scan-%40 should be evicted, only real-uuid-1 remains
+    [[ "$(count_sessions)" -eq 1 ]]
+    [[ "$(get_status 'real-uuid-1')" == "working" ]]
+    local gone
+    gone=$(sql "SELECT COUNT(*) FROM sessions WHERE session_id='scan-%40';")
+    [[ "$gone" -eq 0 ]]
+}
+
+@test "cmd_merge_sandbox keeps scan session when no real session on that pane" {
+    local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
+    create_sandbox_db "$sandbox_db"
+
+    # Scan session on pane %41
+    insert_session "scan-%41" "idle" "%41"
+    sql "UPDATE sessions SET agent_client='deer' WHERE session_id='scan-%41';"
+
+    # Sandbox has a session on a DIFFERENT pane
+    insert_session_into "$sandbox_db" "real-uuid-2" "working" "deer" "%42"
+
+    cmd_merge_sandbox
+
+    # Both should exist - different panes
+    [[ "$(count_sessions)" -eq 2 ]]
+    [[ "$(get_status 'scan-%41')" == "idle" ]]
+    [[ "$(get_status 'real-uuid-2')" == "working" ]]
+}
+
+@test "integration: scan then merge deduplicates to single session per pane" {
+    rm -f "$TRACKER_DIR/.last_scan"
+    local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
+    create_sandbox_db "$sandbox_db"
+
+    # Step 1: scan detects deerbox on pane %43
+    tmux() {
+        case "$1" in
+            list-panes) echo "%43 15000" ;;
+            display-message) echo "/tmp/deer-project" ;;
+            *) true ;;
+        esac
+    }
+    _has_agent_child() { return 0; }
+    _agent_client_type() { echo "deer"; }
+
+    cmd_scan
+    [[ "$(count_sessions)" -eq 1 ]]
+    [[ "$(get_status 'scan-%43')" == "idle" ]]
+
+    # Step 2: sandbox hooks fire, real session created in sandbox DB
+    insert_session_into "$sandbox_db" "deer-uuid-1" "working" "deer" "%43"
+
+    # Step 3: merge imports real session and evicts scan duplicate
+    cmd_merge_sandbox
+    [[ "$(count_sessions)" -eq 1 ]]
+    [[ "$(get_status 'deer-uuid-1')" == "working" ]]
+    local scan_gone
+    scan_gone=$(sql "SELECT COUNT(*) FROM sessions WHERE session_id='scan-%43';")
+    [[ "$scan_gone" -eq 0 ]]
+}

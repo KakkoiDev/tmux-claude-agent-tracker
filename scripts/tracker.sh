@@ -659,6 +659,12 @@ UPDATE sessions SET
 FROM sandbox.sessions AS s
 WHERE sessions.session_id = s.session_id
   AND s.updated_at > sessions.updated_at;
+-- Evict scan-detected duplicates when a real session owns the same pane
+DELETE FROM sessions WHERE session_id LIKE 'scan-%'
+  AND tmux_pane IN (
+    SELECT tmux_pane FROM sessions
+    WHERE session_id NOT LIKE 'scan-%' AND tmux_pane IS NOT NULL AND tmux_pane != ''
+  );
 SELECT total_changes();
 DETACH sandbox;
 SQL
