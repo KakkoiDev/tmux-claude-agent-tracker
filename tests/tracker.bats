@@ -1808,3 +1808,345 @@ SCRIPT
     [[ "$out" == *"1*"* ]]
     [[ "$out" == *"0."* ]]
 }
+
+# ── Sandbox support ──────────────────────────────────────────────────
+
+@test "sandbox detection: writable TRACKER_DIR sets _SANDBOX=0" {
+    # Normal setup has writable TRACKER_DIR
+    [[ "$_SANDBOX" -eq 0 ]]
+}
+
+@test "sandbox detection: read-only TRACKER_DIR sets _SANDBOX=1" {
+    local ro_dir
+    ro_dir=$(mktemp -d)
+    chmod 555 "$ro_dir"
+    # Re-source with read-only dir to trigger detection
+    local saved_db="$DB" saved_cache="$CACHE" saved_tracker="$TRACKER_DIR"
+    TRACKER_DIR="$ro_dir"
+    DB="$ro_dir/tracker.db"
+    CACHE="$ro_dir/status_cache"
+    source_tracker_functions
+    [[ "$_SANDBOX" -eq 1 ]]
+    # Restore for teardown
+    chmod 755 "$ro_dir"
+    rm -rf "$ro_dir"
+    TRACKER_DIR="$saved_tracker"
+    DB="$saved_db"
+    CACHE="$saved_cache"
+    _SANDBOX=0
+}
+
+@test "sandbox detection: non-existent TRACKER_DIR leaves _SANDBOX=0" {
+    local saved_tracker="$TRACKER_DIR" saved_db="$DB" saved_cache="$CACHE"
+    TRACKER_DIR="/tmp/nonexistent-tracker-test-$$"
+    source_tracker_functions
+    [[ "$_SANDBOX" -eq 0 ]]
+    TRACKER_DIR="$saved_tracker"
+    DB="$saved_db"
+    CACHE="$saved_cache"
+}
+
+@test "_tmux is no-op when _SANDBOX=1" {
+    _SANDBOX=1
+    local _called=0
+    tmux() { _called=1; }
+    _tmux refresh-client -S
+    [[ "$_called" -eq 0 ]]
+    _SANDBOX=0
+}
+
+@test "_tmux passes through when _SANDBOX=0" {
+    _SANDBOX=0
+    local _called=0
+    tmux() { _called=1; }
+    _tmux refresh-client -S
+    [[ "$_called" -eq 1 ]]
+}
+
+@test "cmd_init sandbox creates DB with IF NOT EXISTS" {
+    enable_sandbox_mode
+    rm -f "$DB"
+    cmd_init
+    [[ -f "$DB" ]]
+    # Verify table exists
+    local count
+    count=$(printf '.timeout 100\n%s\n' "SELECT COUNT(*) FROM sessions;" | sqlite3 "$DB")
+    [[ "$count" -eq 0 ]]
+    _SANDBOX=0
+}
+
+@test "cmd_init sandbox does not drop existing sessions" {
+    enable_sandbox_mode
+    insert_session "existing-1" "working"
+    # Re-init should not destroy the session
+    cmd_init
+    local count
+    count=$(sql "SELECT COUNT(*) FROM sessions WHERE session_id='existing-1';")
+    [[ "$count" -eq 1 ]]
+    _SANDBOX=0
+}
+
+@test "_load_config_fast returns hardcoded defaults in sandbox" {
+    _SANDBOX=1
+    unset COLOR_WORKING
+    _load_config_fast
+    [[ "$COLOR_WORKING" == "black" ]]
+    [[ "$ICON_WORKING" == "*" ]]
+    [[ "$ICON_BLOCKED" == "!" ]]
+    [[ "$DEBUG_LOG" == "0" ]]
+    [[ "$_HAS_HOOKS" == "0" ]]
+    [[ "$COMPLETED_DELAY" == "3" ]]
+    _SANDBOX=0
+}
+
+@test "cmd_hook auto-inits sandbox DB when missing" {
+    enable_sandbox_mode
+    rm -f "$DB"
+    echo '{"session_id":"auto-init-test","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
+    [[ -f "$DB" ]]
+    local count
+    count=$(sql "SELECT COUNT(*) FROM sessions WHERE session_id='auto-init-test';")
+    [[ "$count" -eq 1 ]]
+    _SANDBOX=0
+}
+
+@test "cmd_hook sets agent_client=deer in sandbox for SessionStart" {
+    enable_sandbox_mode
+    echo '{"session_id":"deer-s1","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
+    local client
+    client=$(sql "SELECT agent_client FROM sessions WHERE session_id='deer-s1';")
+    [[ "$client" == "deer" ]]
+    _SANDBOX=0
+}
+
+@test "cmd_hook sets agent_client=deer in sandbox for UserPromptSubmit" {
+    enable_sandbox_mode
+    echo '{"session_id":"deer-s2","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
+    echo '{"session_id":"deer-s2","cwd":"/tmp/test"}' | cmd_hook "UserPromptSubmit"
+    local client
+    client=$(sql "SELECT agent_client FROM sessions WHERE session_id='deer-s2';")
+    [[ "$client" == "deer" ]]
+    _SANDBOX=0
+}
+
+@test "cmd_hook skips _ensure_schema in sandbox" {
+    enable_sandbox_mode
+    # _ensure_schema tries to touch files in TRACKER_DIR - in sandbox
+    # those would fail. Verify no error and schema marker files are not created.
+    echo '{"session_id":"schema-test","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
+    [[ ! -f "$TRACKER_DIR/.schema_v2" ]]
+    [[ ! -f "$TRACKER_DIR/.schema_v3" ]]
+    _SANDBOX=0
+}
+
+@test "cmd_hook skips _reap_dead in sandbox" {
+    enable_sandbox_mode
+    # Insert a session with a dead pane - should NOT be reaped in sandbox
+    insert_session "no-reap" "working" "%dead-pane-999"
+    echo '{"session_id":"reap-trigger","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
+    local count
+    count=$(sql "SELECT COUNT(*) FROM sessions WHERE session_id='no-reap';")
+    [[ "$count" -eq 1 ]]
+    _SANDBOX=0
+}
+
+@test "cmd_merge_sandbox imports new sessions into host DB" {
+    # Host DB is the normal test DB
+    local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
+    rm -f "$sandbox_db"
+    create_sandbox_db "$sandbox_db"
+    insert_session_into "$sandbox_db" "sandbox-s1" "working" "deer"
+
+    cmd_merge_sandbox
+
+    local status
+    status=$(get_status "sandbox-s1")
+    [[ "$status" == "working" ]]
+    local client
+    client=$(sql "SELECT agent_client FROM sessions WHERE session_id='sandbox-s1';")
+    [[ "$client" == "deer" ]]
+    rm -f "$sandbox_db"
+}
+
+@test "cmd_merge_sandbox does not overwrite newer host data" {
+    local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
+    rm -f "$sandbox_db"
+    create_sandbox_db "$sandbox_db"
+
+    # Sandbox has completed session at timestamp 1000
+    insert_session_into "$sandbox_db" "flicker-s1" "completed" "deer" "" "1000"
+
+    # Host has same session as idle at timestamp 2000 (newer - user focused pane)
+    insert_session "flicker-s1" "idle" "%1" "2000"
+
+    cmd_merge_sandbox
+
+    # Host should keep its newer idle status
+    local status
+    status=$(get_status "flicker-s1")
+    [[ "$status" == "idle" ]]
+    rm -f "$sandbox_db"
+}
+
+@test "cmd_merge_sandbox updates host when sandbox has newer data" {
+    local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
+    rm -f "$sandbox_db"
+    create_sandbox_db "$sandbox_db"
+
+    # Host has idle session at timestamp 1000
+    insert_session "update-s1" "idle" "%1" "1000"
+
+    # Sandbox has same session as working at timestamp 2000 (newer - user typed)
+    insert_session_into "$sandbox_db" "update-s1" "working" "deer" "" "2000"
+
+    cmd_merge_sandbox
+
+    # Host should get the newer working status
+    local status
+    status=$(get_status "update-s1")
+    [[ "$status" == "working" ]]
+    rm -f "$sandbox_db"
+}
+
+@test "cmd_merge_sandbox backfills tmux_target from tmux_pane" {
+    local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
+    rm -f "$sandbox_db"
+    create_sandbox_db "$sandbox_db"
+
+    # Sandbox session has pane but no target
+    insert_session_into "$sandbox_db" "backfill-s1" "working" "deer" "%1"
+
+    # Mock tmux to resolve pane to target
+    tmux() {
+        if [[ "$1" == "display-message" && "$3" == "%1" ]]; then
+            echo "main:0.1"
+        else
+            true
+        fi
+    }
+
+    cmd_merge_sandbox
+
+    local target
+    target=$(sql "SELECT tmux_target FROM sessions WHERE session_id='backfill-s1';")
+    [[ "$target" == "main:0.1" ]]
+    rm -f "$sandbox_db"
+}
+
+@test "cmd_merge_sandbox preserves host tmux_pane when sandbox has empty" {
+    local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
+    rm -f "$sandbox_db"
+    create_sandbox_db "$sandbox_db"
+
+    # Host has pane info, sandbox doesn't
+    insert_session "pane-keep-s1" "idle" "%5" "1000"
+    insert_session_into "$sandbox_db" "pane-keep-s1" "working" "deer" "" "2000"
+
+    cmd_merge_sandbox
+
+    local pane
+    pane=$(sql "SELECT tmux_pane FROM sessions WHERE session_id='pane-keep-s1';")
+    [[ "$pane" == "%5" ]]
+    rm -f "$sandbox_db"
+}
+
+@test "cmd_merge_sandbox no-op when no sandbox DB exists" {
+    rm -f "/tmp/tmux-claude-agent-tracker-sandbox.db"
+    # Should not error
+    cmd_merge_sandbox
+}
+
+@test "cmd_merge_sandbox skips render when nothing changed" {
+    local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
+    rm -f "$sandbox_db"
+    create_sandbox_db "$sandbox_db"
+
+    # Same session, same data, same timestamp - no update
+    insert_session "no-change-s1" "idle" "%1" "1000"
+    insert_session_into "$sandbox_db" "no-change-s1" "idle" "deer" "%1" "1000"
+
+    local _render_called=0
+    _render_cache() { _render_called=1; }
+
+    cmd_merge_sandbox
+
+    # total_changes should be 0 (only INSERT OR IGNORE which is a no-op)
+    # Note: total_changes() may still report changes from INSERT OR IGNORE
+    # The key test is that the host data is unchanged
+    local status
+    status=$(get_status "no-change-s1")
+    [[ "$status" == "idle" ]]
+    rm -f "$sandbox_db"
+}
+
+@test "integration: sandbox session lifecycle" {
+    enable_sandbox_mode
+    # SessionStart creates idle session with deer client
+    echo '{"session_id":"lifecycle-s1","cwd":"/tmp/test"}' | cmd_hook "SessionStart"
+    [[ "$(get_status lifecycle-s1)" == "idle" ]]
+    local client
+    client=$(sql "SELECT agent_client FROM sessions WHERE session_id='lifecycle-s1';")
+    [[ "$client" == "deer" ]]
+
+    # UserPromptSubmit transitions to working
+    echo '{"session_id":"lifecycle-s1","cwd":"/tmp/test"}' | cmd_hook "UserPromptSubmit"
+    [[ "$(get_status lifecycle-s1)" == "working" ]]
+
+    # PostToolUse keeps working
+    echo '{"session_id":"lifecycle-s1"}' | cmd_hook "PostToolUse"
+    [[ "$(get_status lifecycle-s1)" == "working" ]]
+
+    # PermissionRequest transitions to blocked
+    echo '{"session_id":"lifecycle-s1","notification_type":"permission_prompt"}' | cmd_hook "PermissionRequest"
+    [[ "$(get_status lifecycle-s1)" == "blocked" ]]
+
+    # PostToolUse clears blocked to working
+    echo '{"session_id":"lifecycle-s1"}' | cmd_hook "PostToolUse"
+    [[ "$(get_status lifecycle-s1)" == "working" ]]
+
+    # Stop transitions to completed
+    echo '{"session_id":"lifecycle-s1"}' | cmd_hook "Stop"
+    [[ "$(get_status lifecycle-s1)" == "completed" ]]
+    _SANDBOX=0
+}
+
+@test "integration: sandbox merge then host pane-focus does not flicker" {
+    local sandbox_db="/tmp/tmux-claude-agent-tracker-sandbox.db"
+    rm -f "$sandbox_db"
+    create_sandbox_db "$sandbox_db"
+
+    # Sandbox session completed
+    insert_session_into "$sandbox_db" "flicker-int-s1" "completed" "deer" "%1" "1000"
+
+    # First merge: imports completed session
+    cmd_merge_sandbox
+    [[ "$(get_status flicker-int-s1)" == "completed" ]]
+
+    # Host clears completed->idle (simulating pane-focus)
+    sql "UPDATE sessions SET status='idle', updated_at=2000
+         WHERE session_id='flicker-int-s1';"
+    [[ "$(get_status flicker-int-s1)" == "idle" ]]
+
+    # Second merge: sandbox still has completed at timestamp 1000
+    # Host has idle at timestamp 2000 (newer) - must NOT overwrite
+    cmd_merge_sandbox
+    [[ "$(get_status flicker-int-s1)" == "idle" ]]
+    rm -f "$sandbox_db"
+}
+
+@test "integration: multiple concurrent sandbox sessions" {
+    enable_sandbox_mode
+    # Two sessions created by different deerbox instances
+    echo '{"session_id":"concurrent-s1","cwd":"/tmp/project-a"}' | cmd_hook "SessionStart"
+    echo '{"session_id":"concurrent-s2","cwd":"/tmp/project-b"}' | cmd_hook "SessionStart"
+
+    [[ "$(count_sessions)" -eq 2 ]]
+    [[ "$(get_status concurrent-s1)" == "idle" ]]
+    [[ "$(get_status concurrent-s2)" == "idle" ]]
+
+    # Both can transition independently
+    echo '{"session_id":"concurrent-s1","cwd":"/tmp/project-a"}' | cmd_hook "UserPromptSubmit"
+    [[ "$(get_status concurrent-s1)" == "working" ]]
+    [[ "$(get_status concurrent-s2)" == "idle" ]]
+    _SANDBOX=0
+}

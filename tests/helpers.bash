@@ -106,6 +106,74 @@ source_tracker_functions() {
     sed "s|^SCRIPTS_DIR=.*|SCRIPTS_DIR=\"$SCRIPTS_DIR\"|")"
 }
 
+# Enable sandbox mode for testing (call after source_tracker_functions)
+enable_sandbox_mode() {
+    _SANDBOX=1
+    SANDBOX_DB_DIR=$(mktemp -d)
+    DB="$SANDBOX_DB_DIR/sandbox-test.db"
+    CACHE="$SANDBOX_DB_DIR/sandbox-test-cache"
+    # Init sandbox DB
+    sqlite3 "$DB" <<'SQL' >/dev/null 2>&1
+PRAGMA journal_mode=WAL;
+PRAGMA busy_timeout=100;
+CREATE TABLE IF NOT EXISTS sessions (
+    session_id    TEXT PRIMARY KEY,
+    status        TEXT NOT NULL DEFAULT 'working'
+        CHECK(status IN ('working', 'blocked', 'idle', 'completed')),
+    cwd           TEXT NOT NULL,
+    project_name  TEXT NOT NULL,
+    git_branch    TEXT,
+    prompt_summary TEXT,
+    agent_type    TEXT,
+    task_count    INTEGER NOT NULL DEFAULT 0,
+    subagent_count INTEGER NOT NULL DEFAULT 0,
+    agent_client  TEXT NOT NULL DEFAULT 'claude',
+    tmux_pane     TEXT,
+    tmux_target   TEXT,
+    started_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at    INTEGER NOT NULL DEFAULT (unixepoch())
+);
+SQL
+}
+
+# Create a sandbox DB at a given path with sessions
+create_sandbox_db() {
+    local path="$1"
+    sqlite3 "$path" <<'SQL' >/dev/null 2>&1
+PRAGMA journal_mode=WAL;
+PRAGMA busy_timeout=100;
+CREATE TABLE IF NOT EXISTS sessions (
+    session_id    TEXT PRIMARY KEY,
+    status        TEXT NOT NULL DEFAULT 'working'
+        CHECK(status IN ('working', 'blocked', 'idle', 'completed')),
+    cwd           TEXT NOT NULL,
+    project_name  TEXT NOT NULL,
+    git_branch    TEXT,
+    prompt_summary TEXT,
+    agent_type    TEXT,
+    task_count    INTEGER NOT NULL DEFAULT 0,
+    subagent_count INTEGER NOT NULL DEFAULT 0,
+    agent_client  TEXT NOT NULL DEFAULT 'claude',
+    tmux_pane     TEXT,
+    tmux_target   TEXT,
+    started_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at    INTEGER NOT NULL DEFAULT (unixepoch())
+);
+SQL
+}
+
+# Insert a session into a specific DB
+insert_session_into() {
+    local db="$1" sid="$2" status="${3:-working}" client="${4:-claude}" pane="${5:-}" updated="${6:-}"
+    printf '.timeout 100\n%s\n' \
+        "INSERT INTO sessions (session_id, status, cwd, project_name, agent_client, tmux_pane)
+         VALUES ('$sid', '$status', '/tmp/test', 'test', '$client', '$pane');" | sqlite3 "$db"
+    if [[ -n "$updated" ]]; then
+        printf '.timeout 100\n%s\n' \
+            "UPDATE sessions SET updated_at=$updated WHERE session_id='$sid';" | sqlite3 "$db"
+    fi
+}
+
 # Wait for a file to appear (polling, max 2s)
 wait_for_file() {
     local f="$1" i=0
